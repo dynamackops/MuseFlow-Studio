@@ -1,0 +1,13 @@
+# MuseFlow Studio is a Next.js App Router app. Netlify builds it with the
+# Next.js CLI so it produces `.next`, which the Next.js Runtime consumes.
+#
+# The repo also carries a second, Cloudflare Workers build path (`vinext` +
+# `@cloudflare/vite-plugin`, see `npm run build:sites`). That path emits
+# `dist/server/index.js` instead of `.next` and is not used by Netlify.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

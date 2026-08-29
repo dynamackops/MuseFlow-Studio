@@ -30,5 +30,15 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  // The Cloudflare Worker / vinext build path is compiled by Vite, not by
+  // `next build`, and relies on Workers-only globals and the
+  // `cloudflare:workers` module. Keep it out of the Next.js typecheck.
+  "exclude": [
+    "node_modules",
+    "vite.config.ts",
+    "build",
+    "worker",
+    "db/index.ts",
+    "examples"
+  ]
 }
