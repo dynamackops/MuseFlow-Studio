@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
+import AuthGate from "./AuthGate";
 
-type Stage = "cast" | "locations" | "idea" | "scenes" | "images" | "motion" | "edit";
+type Stage = "start" | "cast" | "locations" | "idea" | "scenes" | "images" | "motion" | "edit";
 type MotionStatus = "idle" | "queued" | "in_progress" | "failed";
 type Scene = { id: number; title: string; beat: string; duration: number; shot: string; imagePrompt: string; motionPrompt: string; imageReady: boolean; motionReady: boolean; imageUrl?: string; motionVideoUrl?: string; motionStatus?: MotionStatus; motionError?: string };
 type Character = { id: string; name: string; description: string; referenceImageUrl?: string };
@@ -46,7 +47,11 @@ function buildScenes(idea: string): Scene[] {
 }
 
 export default function Home() {
-  const [stage, setStage] = useState<Stage>("scenes");
+  return <AuthGate><Studio /></AuthGate>;
+}
+
+function Studio() {
+  const [stage, setStage] = useState<Stage>("start");
   const [idea, setIdea] = useState(initialIdea);
   const [projectName, setProjectName] = useState("The Last Light");
   const [scenes, setScenes] = useState<Scene[]>(starterScenes);
@@ -114,6 +119,7 @@ export default function Home() {
             setLocationIds(result.project.locationIds ?? []);
             setMusicBrief(result.project.musicBrief ?? "");
             if (result.scenes?.length) setScenes(result.scenes);
+            setStage("scenes");
           } else {
             window.localStorage.removeItem("museflow-project-id");
           }
@@ -449,7 +455,7 @@ export default function Home() {
 
   return <main className="studio-shell">
     <header className="topbar">
-      <button className="brand" onClick={() => setStage("idea")} aria-label="MuseFlow home"><span className="brand-mark"><i /><i /><i /></span><span><b>MuseFlow</b><small>STORY STUDIO</small></span></button>
+      <button className="brand" onClick={() => setStage("start")} aria-label="MuseFlow home"><span className="brand-mark"><i /><i /><i /></span><span><b>MuseFlow</b><small>STORY STUDIO</small></span></button>
       <div className="project-heading"><span className="status-dot" /><input value={projectName} onChange={(event) => setProjectName(event.target.value)} aria-label="Project title" /><span className="saved-label">{saveState === "saving" ? "Saving…" : "Saved to your workspace"}</span></div>
       <div className="top-actions"><button className="icon-button" onClick={() => setShowConnections(true)} aria-label="Open connections">⌁</button><button className="outline-button" onClick={exportPlan}>Export plan <span>↗</span></button></div>
     </header>
@@ -457,6 +463,25 @@ export default function Home() {
     <div className="workspace"><aside className="rail" aria-label="Creation pipeline"><div className="rail-label">PIPELINE</div><nav>{nav.map((item, index) => { const activeIndex = nav.findIndex((entry) => entry.id === stage); return <button key={item.id} className={`${stage === item.id ? "active" : ""} ${index < activeIndex ? "complete" : ""}`} onClick={() => setStage(item.id)}><span>{index < activeIndex ? "✓" : item.eyebrow}</span><b>{item.label}</b></button>; })}</nav><div className="rail-footer"><div className="avatar">MF</div><div><b>Demo studio</b><small>Local workspace</small></div></div></aside>
 
       <section className="stage-area">
+        {stage === "start" && <div className="start-view view-enter">
+          <div className="section-kicker"><span>✦</span> WELCOME</div>
+          <h1>Where do you want to start?</h1>
+          <p className="lede">Either path leads to the same pipeline — scenes, frames, motion, edit. Pick whichever matches how this idea showed up for you.</p>
+          <div className="start-grid">
+            <button className="start-tile" onClick={() => setStage("idea")}>
+              <span className="start-tile-icon">✎</span>
+              <b>Start with a story idea</b>
+              <p>Write or dictate a raw idea. ChatGPT will map it into scenes for you.</p>
+            </button>
+            <button className="start-tile" onClick={() => setStage("cast")}>
+              <span className="start-tile-icon">✦</span>
+              <b>Start with a character</b>
+              <p>Upload or describe a character first, then build a story around them.</p>
+            </button>
+          </div>
+          <button className="start-sample" onClick={() => setStage("scenes")}>Or look at a sample project first →</button>
+        </div>}
+
         {stage === "cast" && <div className="cast-view view-enter">
           <div className="section-kicker"><span>✦</span> YOUR CAST</div>
           <h1>Bring your characters, once.</h1>
