@@ -1,3 +1,5 @@
+import { uploadMedia } from "../../lib/supabase";
+
 export async function POST(request: Request) {
   const apiKey = request.headers.get("x-provider-key")?.trim();
   if (!apiKey) return Response.json({ error: "Connect an OpenAI API key first." }, { status: 401 });
@@ -20,5 +22,9 @@ export async function POST(request: Request) {
   if (!upstream.ok) return Response.json({ error: result.error?.message ?? "OpenAI could not generate this frame." }, { status: upstream.status });
   const image = result.data?.[0]?.b64_json;
   if (!image) return Response.json({ error: "OpenAI returned no image data." }, { status: 502 });
-  return Response.json({ imageDataUrl: `data:image/webp;base64,${image}` });
+
+  const buffer = Buffer.from(image, "base64");
+  const bytes = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  const imageUrl = await uploadMedia(`frames/${crypto.randomUUID()}.webp`, bytes, "image/webp");
+  return Response.json({ imageUrl });
 }

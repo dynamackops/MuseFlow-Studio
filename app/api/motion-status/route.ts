@@ -1,3 +1,5 @@
+import { uploadMedia } from "../../lib/supabase";
+
 const ALLOWED_HOST = "api.higgsfield.ai";
 
 export async function GET(request: Request) {
@@ -25,9 +27,23 @@ export async function GET(request: Request) {
     return Response.json({ error: result.detail ?? "Higgsfield could not report this request's status." }, { status: upstream.status });
   }
 
+  const higgsfieldVideoUrl = result.status === "completed" ? result.video?.url : undefined;
+  let videoUrl = higgsfieldVideoUrl;
+  if (higgsfieldVideoUrl) {
+    try {
+      const videoResponse = await fetch(higgsfieldVideoUrl);
+      if (videoResponse.ok) {
+        const bytes = await videoResponse.arrayBuffer();
+        videoUrl = await uploadMedia(`clips/${crypto.randomUUID()}.mp4`, bytes, "video/mp4");
+      }
+    } catch {
+      // Keep the Higgsfield URL as a fallback if the copy to permanent storage fails.
+    }
+  }
+
   return Response.json({
     status: result.status ?? "unknown",
-    videoUrl: result.video?.url,
+    videoUrl,
     error: typeof result.error === "string" ? result.error : undefined,
   });
 }

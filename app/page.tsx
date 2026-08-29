@@ -60,19 +60,28 @@ export default function Home() {
   const [visibleKey, setVisibleKey] = useState<ApiProvider | null>(null);
   const [generatingSceneId, setGeneratingSceneId] = useState<number | null>(null);
   const [animatingSceneId, setAnimatingSceneId] = useState<number | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const speechRef = useRef<SpeechRecognitionLike | null>(null);
   const dictationBaseRef = useRef("");
+  const saveTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const saved = window.localStorage.getItem("museflow-project");
-      if (saved) {
+    (async () => {
+      const savedId = window.localStorage.getItem("museflow-project-id");
+      if (savedId) {
         try {
-          const parsed = JSON.parse(saved);
-          setIdea(parsed.idea ?? initialIdea);
-          setProjectName(parsed.projectName ?? "Untitled film");
-          setScenes(parsed.scenes ?? starterScenes);
-        } catch { /* keep starter */ }
+          const response = await fetch(`/api/project?id=${encodeURIComponent(savedId)}`);
+          const result = await response.json() as { project?: { id: string; name: string; idea: string } | null; scenes?: Scene[] };
+          if (response.ok && result.project) {
+            setProjectId(result.project.id);
+            setIdea(result.project.idea || initialIdea);
+            setProjectName(result.project.name || "Untitled film");
+            if (result.scenes?.length) setScenes(result.scenes);
+          } else {
+            window.localStorage.removeItem("museflow-project-id");
+          }
+        } catch { /* keep starter, will save as a new project */ }
       }
       const SpeechRecognitionApi = (window as Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor }).SpeechRecognition
         ?? (window as Window & { webkitSpeechRecognition?: SpeechRecognitionConstructor }).webkitSpeechRecognition;
@@ -82,10 +91,28 @@ export default function Home() {
         higgsfield: Boolean(window.sessionStorage.getItem("museflow-higgsfield-key")),
       });
       setHydrated(true);
-    }, 0);
-    return () => window.clearTimeout(timer);
+    })();
   }, []);
-  useEffect(() => { if (hydrated) window.localStorage.setItem("museflow-project", JSON.stringify({ idea, projectName, scenes: scenes.map((scene) => ({ ...scene, imageUrl: undefined })) })); }, [hydrated, idea, projectName, scenes]);
+  useEffect(() => {
+    if (!hydrated) return;
+    window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(async () => {
+      setSaveState("saving");
+      try {
+        const response = await fetch("/api/project", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: projectId ?? undefined, name: projectName, idea, scenes }) });
+        const result = await response.json() as { id?: string; error?: string };
+        if (!response.ok || !result.id) throw new Error(result.error ?? "Save failed.");
+        if (result.id !== projectId) {
+          setProjectId(result.id);
+          window.localStorage.setItem("museflow-project-id", result.id);
+        }
+        setSaveState("saved");
+      } catch {
+        setSaveState("idle");
+      }
+    }, 1200);
+    return () => window.clearTimeout(saveTimerRef.current);
+  }, [hydrated, idea, projectName, scenes, projectId]);
 
   const totalSeconds = useMemo(() => scenes.reduce((sum, scene) => sum + scene.duration, 0), [scenes]);
   const readyImages = scenes.filter((scene) => scene.imageReady).length;
@@ -131,9 +158,9 @@ export default function Home() {
     flash("ChatGPT Images is creating your frame…");
     try {
       const response = await fetch("/api/generate-image", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ prompt: scene.imagePrompt }) });
-      const result = await response.json() as { imageDataUrl?: string; error?: string };
-      if (!response.ok || !result.imageDataUrl) throw new Error(result.error ?? "Image generation failed.");
-      updateScene(id, { imageReady: true, imageUrl: result.imageDataUrl });
+      const result = await response.json() as { imageUrl?: string; error?: string };
+      if (!response.ok || !result.imageUrl) throw new Error(result.error ?? "Image generation failed.");
+      updateScene(id, { imageReady: true, imageUrl: result.imageUrl });
       flash("Frame ready for review.");
     } catch (error) {
       flash(error instanceof Error ? error.message : "Image generation failed. Check your API key.");
@@ -169,7 +196,7 @@ export default function Home() {
     updateScene(id, { motionStatus: "queued", motionError: undefined });
     flash("Higgsfield is animating your frame…");
     try {
-      const response = await fetch("/api/generate-motion", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ imageDataUrl: scene.imageUrl, prompt: scene.motionPrompt }) });
+      const response = await fetch("/api/generate-motion", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ imageUrl: scene.imageUrl, prompt: scene.motionPrompt }) });
       const result = await response.json() as { requestId?: string; statusUrl?: string; error?: string };
       if (!response.ok || !result.statusUrl) throw new Error(result.error ?? "Motion generation failed.");
       await pollMotionStatus(id, result.statusUrl, apiKey);
@@ -236,7 +263,7 @@ export default function Home() {
   return <main className="studio-shell">
     <header className="topbar">
       <button className="brand" onClick={() => setStage("idea")} aria-label="MuseFlow home"><span className="brand-mark"><i /><i /><i /></span><span><b>MuseFlow</b><small>STORY STUDIO</small></span></button>
-      <div className="project-heading"><span className="status-dot" /><input value={projectName} onChange={(event) => setProjectName(event.target.value)} aria-label="Project title" /><span className="saved-label">Saved locally</span></div>
+      <div className="project-heading"><span className="status-dot" /><input value={projectName} onChange={(event) => setProjectName(event.target.value)} aria-label="Project title" /><span className="saved-label">{saveState === "saving" ? "Saving…" : "Saved to your workspace"}</span></div>
       <div className="top-actions"><button className="icon-button" onClick={() => setShowConnections(true)} aria-label="Open connections">⌁</button><button className="outline-button" onClick={exportPlan}>Export plan <span>↗</span></button></div>
     </header>
 
