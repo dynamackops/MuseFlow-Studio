@@ -5,7 +5,7 @@ import type { ChangeEvent } from "react";
 
 type Stage = "start" | "projects" | "cast" | "locations" | "idea" | "scenes" | "images" | "motion" | "edit";
 type MotionStatus = "idle" | "queued" | "in_progress" | "failed";
-type Scene = { id: number; title: string; beat: string; duration: number; shot: string; imagePrompt: string; motionPrompt: string; imageReady: boolean; motionReady: boolean; imageUrl?: string; motionVideoUrl?: string; motionStatus?: MotionStatus; motionError?: string; characterIds?: string[]; locationId?: string };
+type Scene = { id: number; title: string; beat: string; duration: number; shot: string; imagePrompt: string; motionPrompt: string; imageReady: boolean; motionReady: boolean; imageUrl?: string; motionVideoUrl?: string; motionStatus?: MotionStatus; motionError?: string; characterIds?: string[]; locationId?: string; transition?: string; voiceover?: string };
 type Character = { id: string; name: string; description: string; referenceImageUrl?: string };
 type Location = { id: string; name: string; description: string; referenceImageUrl?: string };
 type ProjectSummary = { id: string; name: string; idea: string; updatedAt: string };
@@ -93,6 +93,8 @@ function Studio() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [isSwitchingProject, setIsSwitchingProject] = useState(false);
   const [showCaptions, setShowCaptions] = useState(true);
+  const [isRendering, setIsRendering] = useState(false);
+  const [renderedVideoUrl, setRenderedVideoUrl] = useState("");
   const speechRef = useRef<SpeechRecognitionLike | null>(null);
   const dictationBaseRef = useRef("");
   const saveTimerRef = useRef<number | undefined>(undefined);
@@ -127,7 +129,6 @@ function Studio() {
             setLocationIds(result.project.locationIds ?? []);
             setMusicBrief(result.project.musicBrief ?? "");
             if (result.scenes?.length) setScenes(result.scenes);
-            setStage("scenes");
           } else {
             window.localStorage.removeItem("museflow-project-id");
           }
@@ -164,6 +165,21 @@ function Studio() {
     }, 1200);
     return () => window.clearTimeout(saveTimerRef.current);
   }, [hydrated, idea, projectName, scenes, projectId, leadCharacterIds, locationIds, musicBrief]);
+
+  useEffect(() => {
+    if (!isPlaying || stage !== "edit") return;
+    const activeDuration = scenes[selected]?.duration ?? 5;
+    const timer = window.setTimeout(() => {
+      setSelected((current) => {
+        if (current >= scenes.length - 1) {
+          setIsPlaying(false);
+          return current;
+        }
+        return current + 1;
+      });
+    }, activeDuration * 1000);
+    return () => window.clearTimeout(timer);
+  }, [isPlaying, selected, scenes, stage]);
 
   const totalSeconds = useMemo(() => scenes.reduce((sum, scene) => sum + scene.duration, 0), [scenes]);
   const readyImages = scenes.filter((scene) => scene.imageReady).length;
@@ -466,6 +482,23 @@ function Studio() {
       setAnimatingSceneId(null);
     }
   }
+  async function renderCut() {
+    if (!scenes.some((scene) => scene.motionVideoUrl || scene.imageUrl)) return flash("Generate at least one frame or clip first.");
+    setIsRendering(true);
+    setRenderedVideoUrl("");
+    flash("Rendering your cut — this can take a minute…");
+    try {
+      const response = await fetch("/api/render-cut", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenes: scenes.map((scene) => ({ imageUrl: scene.imageUrl, motionVideoUrl: scene.motionVideoUrl, duration: scene.duration })) }) });
+      const result = await response.json() as { videoUrl?: string; error?: string };
+      if (!response.ok || !result.videoUrl) throw new Error(result.error ?? "Rendering failed.");
+      setRenderedVideoUrl(result.videoUrl);
+      flash("Your cut is ready.");
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Rendering failed.");
+    } finally {
+      setIsRendering(false);
+    }
+  }
   function exportPlan() { const file = new Blob([JSON.stringify({ projectName, idea, aspectRatio: "16:9", scenes }, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(file); const link = document.createElement("a"); link.href = url; link.download = `${projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "museflow-project"}-edit-plan.json`; link.click(); URL.revokeObjectURL(url); flash("Edit plan exported."); }
 
   function toggleDictation() {
@@ -629,7 +662,7 @@ function Studio() {
 
         {stage === "motion" && <div className="motion-view view-enter"><div className="stage-header compact"><div><div className="section-kicker"><span>04</span> MOTION DIRECTION</div><h1>Motion with a reason.</h1><p>MuseFlow sends each frame and its motion direction to Higgsfield, which renders a real video clip.</p></div><div className={`connection-chip higgs ${connectedProviders.higgsfield ? "connected" : ""}`}><span>H</span><div><b>Higgsfield</b><small>{connectedProviders.higgsfield ? "Your key is connected" : "Bring your own API key"}</small></div><button onClick={() => setShowConnections(true)}>Manage</button></div></div><div className="motion-list">{scenes.map((scene, index) => <article key={scene.id} className="motion-row"><div className={`motion-still ${sceneLooks[index % sceneLooks.length]}`} style={!scene.motionVideoUrl && scene.imageUrl ? { backgroundImage: `url(${scene.imageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}>{scene.motionVideoUrl ? <video src={scene.motionVideoUrl} muted loop autoPlay playsInline /> : <><span>{String(index + 1).padStart(2, "0")}</span>{scene.imageReady ? scene.imageUrl ? null : <div className="mini-subject" /> : <small>NO FRAME</small>}</>}</div><div className="motion-copy"><small>{scene.shot.toUpperCase()}</small><b>{scene.title}</b><p>{scene.motionPrompt}</p><div className="motion-tags"><span>Identity lock</span><span>Calm pacing</span><span>{scene.duration}s</span></div>{scene.motionStatus === "failed" && scene.motionError && <p className="motion-error">{scene.motionError}</p>}</div><div className="motion-actions"><button onClick={() => copy(scene.motionPrompt, "Motion prompt")}>Copy prompt</button><button className={scene.motionReady ? "prepared" : ""} disabled={animatingSceneId === scene.id || !scene.imageReady} onClick={() => generateMotion(scene.id)}>{animatingSceneId === scene.id ? (scene.motionStatus === "in_progress" ? "Rendering…" : "Queued…") : scene.motionReady ? "Regenerate clip" : scene.motionStatus === "failed" ? "Retry animation" : "Animate with Higgsfield"}</button></div></article>)}</div><div className="continue-bar"><span><b>{readyMotion}/{scenes.length}</b> motion clips ready</span><button className="primary-button" onClick={() => setStage("edit")}>Enter the edit room <span>→</span></button></div></div>}
 
-        {stage === "edit" && <div className="edit-view view-enter"><div className="edit-heading"><div><div className="section-kicker"><span>05</span> ROUGH CUT</div><h1>Feel the whole story.</h1></div><div className="edit-actions"><button className={showCaptions ? "active" : ""} onClick={() => setShowCaptions((current) => !current)}>{showCaptions ? "Hide captions" : "Show captions"}</button><button onClick={generateMusicBrief} disabled={isGeneratingMusicBrief}>{isGeneratingMusicBrief ? "Writing…" : musicBrief ? "Regenerate music" : "Music"}</button><button className="primary-button" onClick={exportPlan}>Export for CapCut <span>↗</span></button></div></div><div className="editor-grid"><div className={`viewer ${sceneLooks[selected % sceneLooks.length]}`} style={!activeScene?.motionVideoUrl && activeScene?.imageUrl ? { backgroundImage: `url(${activeScene.imageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}><div className="safe-frame">{activeScene?.motionVideoUrl ? <video key={activeScene.id} src={activeScene.motionVideoUrl} muted loop autoPlay playsInline className="viewer-video" /> : !activeScene?.imageUrl && <div className="viewer-art"><i /><i /><i /></div>}{showCaptions && <div className="caption-preview">{activeScene?.beat}</div>}</div><div className="viewer-controls"><button onClick={() => setSelected(Math.max(0, selected - 1))}>◁</button><button className="play" onClick={() => setIsPlaying(!isPlaying)}>{isPlaying ? "Ⅱ" : "▶"}</button><button onClick={() => setSelected(Math.min(scenes.length - 1, selected + 1))}>▷</button><span>00:{String(scenes.slice(0, selected).reduce((sum, scene) => sum + scene.duration, 0)).padStart(2, "0")} / 00:{String(totalSeconds).padStart(2, "0")}</span><button>▣</button></div></div><aside className="cut-notes"><span>CUT NOTES</span><h3>{activeScene?.title}</h3><p>Let this beat breathe. Cut on the emotional action, not just the camera movement.</p><label>Transition<select defaultValue="Dissolve"><option>Dissolve</option><option>Hard cut</option><option>Fade through black</option></select></label><label>Voiceover<textarea placeholder="Add the line that belongs over this scene…" /></label><button onClick={() => flash("Cut note saved.")}>Save note</button></aside></div><div className="timeline"><div className="timeline-ruler"><span>00:00</span><span>00:05</span><span>00:10</span><span>00:15</span><span>00:{String(totalSeconds).padStart(2, "0")}</span></div><div className="track"><b>VIDEO</b><div className="clips">{scenes.map((scene, index) => <button key={scene.id} style={{ flex: scene.duration }} className={`${sceneLooks[index % sceneLooks.length]} ${selected === index ? "selected" : ""}`} onClick={() => setSelected(index)}><span>{index + 1}</span>{scene.title}</button>)}</div></div><div className="track audio"><b>VOICE</b><div className="waveform">{Array.from({ length: 44 }).map((_, index) => <i key={index} style={{ height: `${7 + ((index * 13) % 21)}px` }} />)}</div></div><div className="track music"><b>MUSIC</b>{musicBrief ? <div className="music-brief"><pre>{musicBrief}</pre><button onClick={() => copy(musicBrief, "Music brief")}>Copy</button></div> : <div className="music-empty"><span>No music brief yet</span><button onClick={generateMusicBrief} disabled={isGeneratingMusicBrief}>{isGeneratingMusicBrief ? "Writing…" : "Generate with AI"}</button></div>}</div></div></div>}
+        {stage === "edit" && <div className="edit-view view-enter"><div className="edit-heading"><div><div className="section-kicker"><span>05</span> ROUGH CUT</div><h1>Feel the whole story.</h1></div><div className="edit-actions"><button className={showCaptions ? "active" : ""} onClick={() => setShowCaptions((current) => !current)}>{showCaptions ? "Hide captions" : "Show captions"}</button><button onClick={generateMusicBrief} disabled={isGeneratingMusicBrief}>{isGeneratingMusicBrief ? "Writing…" : musicBrief ? "Regenerate music" : "Music"}</button><button onClick={exportPlan}>Export plan <span>↗</span></button><button className="primary-button" onClick={renderCut} disabled={isRendering}>{isRendering ? "Rendering…" : "Render video"}</button></div></div>{renderedVideoUrl && <div className="rendered-cut"><video src={renderedVideoUrl} controls /><a href={renderedVideoUrl} target="_blank" rel="noreferrer">Open rendered file ↗</a></div>}<div className="editor-grid"><div className={`viewer ${sceneLooks[selected % sceneLooks.length]}`} style={!activeScene?.motionVideoUrl && activeScene?.imageUrl ? { backgroundImage: `url(${activeScene.imageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}><div className="safe-frame">{activeScene?.motionVideoUrl ? <video key={activeScene.id} src={activeScene.motionVideoUrl} muted loop autoPlay playsInline className="viewer-video" /> : !activeScene?.imageUrl && <div className="viewer-art"><i /><i /><i /></div>}{showCaptions && <div className="caption-preview">{activeScene?.beat}</div>}</div><div className="viewer-controls"><button onClick={() => setSelected(Math.max(0, selected - 1))}>◁</button><button className="play" onClick={() => setIsPlaying(!isPlaying)}>{isPlaying ? "Ⅱ" : "▶"}</button><button onClick={() => setSelected(Math.min(scenes.length - 1, selected + 1))}>▷</button><span>00:{String(scenes.slice(0, selected).reduce((sum, scene) => sum + scene.duration, 0)).padStart(2, "0")} / 00:{String(totalSeconds).padStart(2, "0")}</span><button>▣</button></div></div><aside className="cut-notes"><span>CUT NOTES</span><h3>{activeScene?.title}</h3><p>Let this beat breathe. Cut on the emotional action, not just the camera movement.</p><label>Transition<select value={activeScene?.transition ?? "Dissolve"} onChange={(event) => activeScene && updateScene(activeScene.id, { transition: event.target.value })}><option>Dissolve</option><option>Hard cut</option><option>Fade through black</option></select></label><label>Voiceover<textarea value={activeScene?.voiceover ?? ""} onChange={(event) => activeScene && updateScene(activeScene.id, { voiceover: event.target.value })} placeholder="Add the line that belongs over this scene…" /></label><button onClick={() => flash("Cut note saved.")}>Save note</button></aside></div><div className="timeline"><div className="timeline-ruler"><span>00:00</span><span>00:05</span><span>00:10</span><span>00:15</span><span>00:{String(totalSeconds).padStart(2, "0")}</span></div><div className="track"><b>VIDEO</b><div className="clips">{scenes.map((scene, index) => <button key={scene.id} style={{ flex: scene.duration }} className={`${sceneLooks[index % sceneLooks.length]} ${selected === index ? "selected" : ""}`} onClick={() => setSelected(index)}><span>{index + 1}</span>{scene.title}</button>)}</div></div><div className="track audio"><b>VOICE</b><div className="waveform">{Array.from({ length: 44 }).map((_, index) => <i key={index} style={{ height: `${7 + ((index * 13) % 21)}px` }} />)}</div></div><div className="track music"><b>MUSIC</b>{musicBrief ? <div className="music-brief"><pre>{musicBrief}</pre><button onClick={() => copy(musicBrief, "Music brief")}>Copy</button></div> : <div className="music-empty"><span>No music brief yet</span><button onClick={generateMusicBrief} disabled={isGeneratingMusicBrief}>{isGeneratingMusicBrief ? "Writing…" : "Generate with AI"}</button></div>}</div></div></div>}
       </section></div>
 
     {showConnections && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowConnections(false)}><section className="connection-modal" role="dialog" aria-modal="true" aria-label="Creative tool connections" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowConnections(false)}>×</button><div className="section-kicker"><span>⌁</span> BRING YOUR OWN KEYS</div><h2>Use your creative accounts.</h2><p>Each person can connect their own provider credentials. Keys are kept only in this browser session, cleared when the session closes, and never saved inside a MuseFlow project.</p>
