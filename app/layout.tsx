@@ -15,9 +15,6 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "MuseFlow Studio",
   description: "A personal AI story-to-film workspace for shaping ideas, scenes, frames, motion, and edits.",
-  other: {
-    "codex-preview": "development",
-  },
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
