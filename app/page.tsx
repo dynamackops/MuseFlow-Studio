@@ -426,11 +426,12 @@ function Studio() {
     flash("ChatGPT Images is creating your frame…");
     const sceneCharacters = scene.characterIds?.length ? characters.filter((character) => scene.characterIds?.includes(character.id)) : activeCharacters;
     const sceneLocation = scene.locationId ? locations.find((location) => location.id === scene.locationId) : activeLocations[0];
-    const sceneCharacterReferenceUrl = sceneCharacters.find((character) => character.referenceImageUrl)?.referenceImageUrl;
-    const castDescriptions = sceneCharacters.map((character) => ({ name: character.name, description: character.description }));
-    if (sceneLocation) castDescriptions.push({ name: sceneLocation.name, description: sceneLocation.description });
+    const referenceImages = [
+      ...sceneCharacters.filter((character) => character.referenceImageUrl).map((character) => ({ url: character.referenceImageUrl!, name: character.name, description: character.description, kind: "character" as const })),
+      ...(sceneLocation?.referenceImageUrl ? [{ url: sceneLocation.referenceImageUrl, name: sceneLocation.name, description: sceneLocation.description, kind: "location" as const }] : []),
+    ];
     try {
-      const response = await fetch("/api/generate-image", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ prompt: scene.imagePrompt, characterReferenceUrl: sceneCharacterReferenceUrl, locationReferenceUrl: sceneLocation?.referenceImageUrl, castDescriptions }) });
+      const response = await fetch("/api/generate-image", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ prompt: scene.imagePrompt, referenceImages }) });
       const result = await response.json() as { imageUrl?: string; error?: string };
       if (!response.ok || !result.imageUrl) throw new Error(result.error ?? "Image generation failed.");
       updateScene(id, { imageReady: true, imageUrl: result.imageUrl });
