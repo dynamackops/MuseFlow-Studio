@@ -6,23 +6,33 @@ export async function POST(request: Request) {
 
   let prompt = "";
   let characterReferenceUrl: string | undefined;
+  let locationReferenceUrl: string | undefined;
   try {
-    const body = await request.json() as { prompt?: string; characterReferenceUrl?: string };
+    const body = await request.json() as { prompt?: string; characterReferenceUrl?: string; locationReferenceUrl?: string };
     prompt = body.prompt?.trim() ?? "";
     characterReferenceUrl = body.characterReferenceUrl?.trim() || undefined;
+    locationReferenceUrl = body.locationReferenceUrl?.trim() || undefined;
   } catch {
     return Response.json({ error: "The image prompt could not be read." }, { status: 400 });
   }
   if (!prompt) return Response.json({ error: "Add an image prompt first." }, { status: 400 });
 
+  // OpenAI's image-edit endpoint accepts one reference image, so a character's
+  // face takes priority over a location's when both are attached; the
+  // location's look still reaches the model through the text prompt.
+  const referenceUrl = characterReferenceUrl ?? locationReferenceUrl;
+  const referenceLabel = characterReferenceUrl ? "character" : "location";
+
   let upstream: Response;
-  if (characterReferenceUrl) {
-    const referenceResponse = await fetch(characterReferenceUrl);
-    if (!referenceResponse.ok) return Response.json({ error: "Could not load this scene's character reference." }, { status: 502 });
+  if (referenceUrl) {
+    const referenceResponse = await fetch(referenceUrl);
+    if (!referenceResponse.ok) return Response.json({ error: `Could not load this scene's ${referenceLabel} reference.` }, { status: 502 });
     const referenceBlob = await referenceResponse.blob();
     const form = new FormData();
     form.append("model", "gpt-image-1.5");
-    form.append("prompt", `${prompt}. Match the exact face, body, and wardrobe of the reference character image.`);
+    form.append("prompt", referenceLabel === "character"
+      ? `${prompt}. Match the exact face, body, and wardrobe of the reference character image.`
+      : `${prompt}. Match the exact architecture, layout, and color palette of the reference location image.`);
     form.append("size", "1536x1024");
     form.append("quality", "low");
     form.append("image", referenceBlob, "reference.webp");
