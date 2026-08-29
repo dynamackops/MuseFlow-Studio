@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import AuthGate from "./AuthGate";
 
 type Stage = "start" | "cast" | "locations" | "idea" | "scenes" | "images" | "motion" | "edit";
 type MotionStatus = "idle" | "queued" | "in_progress" | "failed";
@@ -47,7 +46,7 @@ function buildScenes(idea: string): Scene[] {
 }
 
 export default function Home() {
-  return <AuthGate><Studio /></AuthGate>;
+  return <Studio />;
 }
 
 function Studio() {
