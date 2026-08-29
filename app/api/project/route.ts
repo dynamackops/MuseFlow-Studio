@@ -4,12 +4,14 @@ type ClientScene = {
   id: number; title: string; beat: string; duration: number; shot: string;
   imagePrompt: string; motionPrompt: string; imageReady: boolean; motionReady: boolean;
   imageUrl?: string; motionVideoUrl?: string; characterIds?: string[]; locationId?: string;
+  transition?: string; voiceover?: string;
 };
 
 type SceneRow = {
   position: number; title: string; beat: string; duration: number; shot: string;
   image_prompt: string; motion_prompt: string; image_url: string | null; motion_video_url: string | null;
   image_ready: boolean; motion_ready: boolean; character_ids: string[] | null; location_id: string | null;
+  transition: string | null; voiceover: string | null;
 };
 
 export async function GET(request: Request) {
@@ -38,6 +40,8 @@ export async function GET(request: Request) {
     motionVideoUrl: row.motion_video_url ?? undefined,
     characterIds: row.character_ids ?? [],
     locationId: row.location_id ?? undefined,
+    transition: row.transition ?? "Dissolve",
+    voiceover: row.voiceover ?? "",
   }));
 
   return Response.json({
@@ -86,6 +90,8 @@ export async function POST(request: Request) {
     motion_ready: scene.motionReady,
     character_ids: scene.characterIds ?? [],
     location_id: scene.locationId ?? null,
+    transition: scene.transition ?? "Dissolve",
+    voiceover: scene.voiceover ?? "",
   }));
   if (rows.length) {
     const { error: insertError } = await supabase.from("scenes").insert(rows);
