@@ -7,15 +7,28 @@ export async function POST(request: Request) {
   let prompt = "";
   let characterReferenceUrl: string | undefined;
   let locationReferenceUrl: string | undefined;
+  let castDescriptions: Array<{ name: string; description: string }> = [];
   try {
-    const body = await request.json() as { prompt?: string; characterReferenceUrl?: string; locationReferenceUrl?: string };
+    const body = await request.json() as {
+      prompt?: string; characterReferenceUrl?: string; locationReferenceUrl?: string;
+      castDescriptions?: Array<{ name: string; description: string }>;
+    };
     prompt = body.prompt?.trim() ?? "";
     characterReferenceUrl = body.characterReferenceUrl?.trim() || undefined;
     locationReferenceUrl = body.locationReferenceUrl?.trim() || undefined;
+    castDescriptions = body.castDescriptions ?? [];
   } catch {
     return Response.json({ error: "The image prompt could not be read." }, { status: 400 });
   }
   if (!prompt) return Response.json({ error: "Add an image prompt first." }, { status: 400 });
+
+  // Every attached character/location is named in the text prompt even though
+  // only one reference image can condition the generation, so a scene with
+  // several cast members still gets all of them described, not just the one
+  // whose photo was used.
+  if (castDescriptions.length) {
+    prompt += ` Featuring: ${castDescriptions.map((entry) => `${entry.name} (${entry.description})`).join("; ")}.`;
+  }
 
   // OpenAI's image-edit endpoint accepts one reference image, so a character's
   // face takes priority over a location's when both are attached; the

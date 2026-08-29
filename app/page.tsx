@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 
-type Stage = "start" | "cast" | "locations" | "idea" | "scenes" | "images" | "motion" | "edit";
+type Stage = "start" | "projects" | "cast" | "locations" | "idea" | "scenes" | "images" | "motion" | "edit";
 type MotionStatus = "idle" | "queued" | "in_progress" | "failed";
-type Scene = { id: number; title: string; beat: string; duration: number; shot: string; imagePrompt: string; motionPrompt: string; imageReady: boolean; motionReady: boolean; imageUrl?: string; motionVideoUrl?: string; motionStatus?: MotionStatus; motionError?: string };
+type Scene = { id: number; title: string; beat: string; duration: number; shot: string; imagePrompt: string; motionPrompt: string; imageReady: boolean; motionReady: boolean; imageUrl?: string; motionVideoUrl?: string; motionStatus?: MotionStatus; motionError?: string; characterIds?: string[]; locationId?: string };
 type Character = { id: string; name: string; description: string; referenceImageUrl?: string };
 type Location = { id: string; name: string; description: string; referenceImageUrl?: string };
+type ProjectSummary = { id: string; name: string; idea: string; updatedAt: string };
 type ApiProvider = "openai" | "higgsfield";
 type SpeechResult = { 0: { transcript: string }; isFinal: boolean; length: number };
 type SpeechEvent = { resultIndex: number; results: ArrayLike<SpeechResult> };
@@ -33,7 +34,7 @@ const starterScenes: Scene[] = [
 ];
 
 const nav: Array<{ id: Stage; label: string; eyebrow: string }> = [
-  { id: "cast", label: "Cast", eyebrow: "✦" }, { id: "locations", label: "Settings", eyebrow: "✦" }, { id: "idea", label: "Story spark", eyebrow: "01" }, { id: "scenes", label: "Scene map", eyebrow: "02" }, { id: "images", label: "Frames", eyebrow: "03" }, { id: "motion", label: "Motion", eyebrow: "04" }, { id: "edit", label: "Edit room", eyebrow: "05" },
+  { id: "projects", label: "My Projects", eyebrow: "▤" }, { id: "cast", label: "Cast", eyebrow: "✦" }, { id: "locations", label: "Settings", eyebrow: "✦" }, { id: "idea", label: "Story spark", eyebrow: "01" }, { id: "scenes", label: "Scene map", eyebrow: "02" }, { id: "images", label: "Frames", eyebrow: "03" }, { id: "motion", label: "Motion", eyebrow: "04" }, { id: "edit", label: "Edit room", eyebrow: "05" },
 ];
 const sceneLooks = ["look-one", "look-two", "look-three", "look-four", "look-five"];
 
@@ -89,6 +90,9 @@ function Studio() {
   const [isGeneratingLocationReference, setIsGeneratingLocationReference] = useState(false);
   const [musicBrief, setMusicBrief] = useState("");
   const [isGeneratingMusicBrief, setIsGeneratingMusicBrief] = useState(false);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [isSwitchingProject, setIsSwitchingProject] = useState(false);
+  const [showCaptions, setShowCaptions] = useState(true);
   const speechRef = useRef<SpeechRecognitionLike | null>(null);
   const dictationBaseRef = useRef("");
   const saveTimerRef = useRef<number | undefined>(undefined);
@@ -105,6 +109,11 @@ function Studio() {
         const result = await response.json() as { locations?: Location[] };
         if (response.ok && result.locations) setLocations(result.locations);
       } catch { /* location library stays empty */ }
+      try {
+        const response = await fetch("/api/projects");
+        const result = await response.json() as { projects?: ProjectSummary[] };
+        if (response.ok && result.projects) setProjects(result.projects);
+      } catch { /* project list stays empty */ }
       const savedId = window.localStorage.getItem("museflow-project-id");
       if (savedId) {
         try {
@@ -148,6 +157,7 @@ function Studio() {
           window.localStorage.setItem("museflow-project-id", result.id);
         }
         setSaveState("saved");
+        refreshProjectList();
       } catch {
         setSaveState("idle");
       }
@@ -160,10 +170,60 @@ function Studio() {
   const readyMotion = scenes.filter((scene) => scene.motionReady).length;
   const activeScene = scenes[selected] ?? scenes[0];
   const activeCharacters = useMemo(() => characters.filter((character) => leadCharacterIds.includes(character.id)), [characters, leadCharacterIds]);
-  const primaryReferenceUrl = activeCharacters.find((character) => character.referenceImageUrl)?.referenceImageUrl;
   const activeLocations = useMemo(() => locations.filter((location) => locationIds.includes(location.id)), [locations, locationIds]);
-  const primaryLocationReferenceUrl = activeLocations.find((location) => location.referenceImageUrl)?.referenceImageUrl;
   function flash(message: string) { setToast(message); window.setTimeout(() => setToast(""), 2300); }
+  async function refreshProjectList() {
+    try {
+      const response = await fetch("/api/projects");
+      const result = await response.json() as { projects?: ProjectSummary[] };
+      if (response.ok && result.projects) setProjects(result.projects);
+    } catch { /* keep the list we already have */ }
+  }
+  async function openProject(id: string) {
+    setIsSwitchingProject(true);
+    try {
+      const response = await fetch(`/api/project?id=${encodeURIComponent(id)}`);
+      const result = await response.json() as { project?: { id: string; name: string; idea: string; leadCharacterIds: string[]; locationIds: string[]; musicBrief: string } | null; scenes?: Scene[]; error?: string };
+      if (!response.ok || !result.project) throw new Error(result.error ?? "Could not open this project.");
+      setProjectId(result.project.id);
+      setIdea(result.project.idea || initialIdea);
+      setProjectName(result.project.name || "Untitled film");
+      setLeadCharacterIds(result.project.leadCharacterIds ?? []);
+      setLocationIds(result.project.locationIds ?? []);
+      setMusicBrief(result.project.musicBrief ?? "");
+      setScenes(result.scenes?.length ? result.scenes : []);
+      setSelected(0);
+      window.localStorage.setItem("museflow-project-id", result.project.id);
+      setStage("scenes");
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Could not open this project.");
+    } finally {
+      setIsSwitchingProject(false);
+    }
+  }
+  function startNewProject() {
+    setProjectId(null);
+    window.localStorage.removeItem("museflow-project-id");
+    setIdea(initialIdea);
+    setProjectName("Untitled film");
+    setScenes(starterScenes);
+    setLeadCharacterIds([]);
+    setLocationIds([]);
+    setMusicBrief("");
+    setSelected(0);
+    setStage("start");
+  }
+  async function deleteProjectById(id: string) {
+    try {
+      const response = await fetch(`/api/project?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Delete failed.");
+      setProjects((current) => current.filter((project) => project.id !== id));
+      if (id === projectId) startNewProject();
+      flash("Project deleted.");
+    } catch {
+      flash("Could not delete this project.");
+    }
+  }
   function toggleLeadCharacter(id: string) { setLeadCharacterIds((current) => current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]); }
   function resetCharacterForm() { setCharFormId(null); setCharFormName(""); setCharFormDescription(""); setCharFormReferenceUrl(""); }
   function loadCharacterIntoForm(character: Character) { setCharFormId(character.id); setCharFormName(character.name); setCharFormDescription(character.description); setCharFormReferenceUrl(character.referenceImageUrl ?? ""); }
@@ -320,13 +380,13 @@ function Studio() {
       const response = await fetch("/api/generate-scenes", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ idea, characters: activeCharacters.map((character) => ({ name: character.name, description: character.description })), locations: activeLocations.map((location) => ({ name: location.name, description: location.description })) }) });
       const result = await response.json() as { scenes?: Array<Omit<Scene, "id" | "imageReady" | "motionReady">>; error?: string };
       if (!response.ok || !result.scenes?.length) throw new Error(result.error ?? "generation-failed");
-      const next: Scene[] = result.scenes.map((scene, index) => ({ ...scene, id: index + 1, imageReady: false, motionReady: false }));
+      const next: Scene[] = result.scenes.map((scene, index) => ({ ...scene, id: index + 1, imageReady: false, motionReady: false, characterIds: activeCharacters.map((character) => character.id), locationId: activeLocations[0]?.id }));
       setScenes(next);
       setSelected(0);
       setStage("scenes");
       flash(`${next.length} scenes mapped by ChatGPT.`);
     } catch (error) {
-      const next = buildScenes(idea);
+      const next = buildScenes(idea).map((scene) => ({ ...scene, characterIds: activeCharacters.map((character) => character.id), locationId: activeLocations[0]?.id }));
       setScenes(next);
       setSelected(0);
       setStage("scenes");
@@ -348,8 +408,13 @@ function Studio() {
     if (!scene) return;
     setGeneratingSceneId(id);
     flash("ChatGPT Images is creating your frame…");
+    const sceneCharacters = scene.characterIds?.length ? characters.filter((character) => scene.characterIds?.includes(character.id)) : activeCharacters;
+    const sceneLocation = scene.locationId ? locations.find((location) => location.id === scene.locationId) : activeLocations[0];
+    const sceneCharacterReferenceUrl = sceneCharacters.find((character) => character.referenceImageUrl)?.referenceImageUrl;
+    const castDescriptions = sceneCharacters.map((character) => ({ name: character.name, description: character.description }));
+    if (sceneLocation) castDescriptions.push({ name: sceneLocation.name, description: sceneLocation.description });
     try {
-      const response = await fetch("/api/generate-image", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ prompt: scene.imagePrompt, characterReferenceUrl: primaryReferenceUrl, locationReferenceUrl: primaryLocationReferenceUrl }) });
+      const response = await fetch("/api/generate-image", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ prompt: scene.imagePrompt, characterReferenceUrl: sceneCharacterReferenceUrl, locationReferenceUrl: sceneLocation?.referenceImageUrl, castDescriptions }) });
       const result = await response.json() as { imageUrl?: string; error?: string };
       if (!response.ok || !result.imageUrl) throw new Error(result.error ?? "Image generation failed.");
       updateScene(id, { imageReady: true, imageUrl: result.imageUrl });
@@ -479,6 +544,15 @@ function Studio() {
             </button>
           </div>
           <button className="start-sample" onClick={() => setStage("scenes")}>Or look at a sample project first →</button>
+          {projects.length > 0 && <button className="start-sample" onClick={() => setStage("projects")}>Or open one of your {projects.length} saved projects →</button>}
+        </div>}
+
+        {stage === "projects" && <div className="projects-view view-enter">
+          <div className="stage-header"><div><div className="section-kicker"><span>▤</span> MY PROJECTS</div><h1>Every film you&rsquo;ve started.</h1><p>Pick one up where you left off, or start something new.</p></div><button className="primary-button" onClick={startNewProject}>New project <span>＋</span></button></div>
+          {projects.length === 0 ? <p className="cast-empty">No saved projects yet.</p> : <div className="projects-list">{projects.map((project) => <article key={project.id} className={`project-card ${project.id === projectId ? "selected" : ""}`}>
+            <div className="project-copy"><b>{project.name}</b><p>{project.idea}</p><small>Last saved {new Date(project.updatedAt).toLocaleString()}</small></div>
+            <div className="project-actions"><button onClick={() => deleteProjectById(project.id)}>Delete</button><button className="primary-button" disabled={isSwitchingProject} onClick={() => openProject(project.id)}>{project.id === projectId ? "Current" : "Open"}</button></div>
+          </article>)}</div>}
         </div>}
 
         {stage === "cast" && <div className="cast-view view-enter">
@@ -549,13 +623,13 @@ function Studio() {
 
         {stage === "idea" && <div className="idea-view view-enter"><div className="section-kicker"><span>01</span> START WITH THE FEELING</div><h1>Tell me the movie in your head.</h1><p className="lede">Messy is welcome. Type it, speak it, or paste the poem that started it. MuseFlow will find the beats without flattening your voice.</p><div className={`idea-card ${isListening ? "listening" : ""}`}><div className="idea-toolbar"><span>STORY BRAIN DUMP</span><div className="idea-tools"><span>{idea.length} characters</span><button className={`dictate-button ${isListening ? "active" : ""}`} onClick={toggleDictation} disabled={!speechSupported} aria-pressed={isListening} aria-label={isListening ? "Stop dictating story" : "Dictate story spark"}><i>{isListening ? "■" : "●"}</i>{isListening ? "Listening — tap to stop" : speechSupported ? "Dictate story" : "Dictation unavailable"}</button></div></div><textarea value={idea} onChange={(event) => setIdea(event.target.value)} placeholder="I keep imagining…" aria-label="Story spark" /><div className="dictation-status" aria-live="polite">{isListening ? <><span /> Listening… speak naturally. Your words will appear here.</> : "Use the microphone when the idea is easier to say than type."}</div><div className="idea-footer"><div className="tone-pills"><button className="selected">Poetic</button><button>Cinematic</button><button>Low-stimulation</button></div><button className="primary-button" onClick={createStoryMap} disabled={isBuilding}>{isBuilding ? "Finding the story beats…" : "Build my scene map"}<span>→</span></button></div></div><div className="promise-row"><span>✦ Your voice stays central</span><span>◌ Character continuity baked in</span><span>⌁ Edit every decision</span></div></div>}
 
-        {stage === "scenes" && <div className="scene-view view-enter"><div className="stage-header"><div><div className="section-kicker"><span>02</span> STORY MAP</div><h1>Your idea, shaped into scenes.</h1><p>Each scene carries one emotional beat and one visual job. Click any card to refine it.</p></div><div className="runtime"><small>EST. RUNTIME</small><strong>00:{String(totalSeconds).padStart(2, "0")}</strong><span>{scenes.length} scenes · 16:9</span></div></div><div className="scene-layout"><div className="scene-list">{scenes.map((scene, index) => <button key={scene.id} className={`scene-card ${selected === index ? "selected" : ""}`} onClick={() => setSelected(index)}><span className="grip">⠿</span><span className={`scene-thumb ${sceneLooks[index % sceneLooks.length]}`}><i>{String(index + 1).padStart(2, "0")}</i></span><span className="scene-copy"><small>SCENE {String(index + 1).padStart(2, "0")}</small><b>{scene.title}</b><em>{scene.beat}</em></span><span className="scene-meta"><b>{scene.duration}s</b><small>{scene.shot.split(" · ")[0]}</small></span></button>)}<button className="add-scene" onClick={() => { const id = Math.max(0, ...scenes.map((scene) => scene.id)) + 1; setScenes([...scenes, { id, title: "New story beat", beat: "Describe what changes in this moment.", duration: 5, shot: "Slow push · medium", imagePrompt: "Cinematic story frame, Black lead character, emotionally precise, 16:9", motionPrompt: "Slow, motivated camera movement. Preserve identity and composition.", imageReady: false, motionReady: false }]); setSelected(scenes.length); }}><span>＋</span> Add a scene</button></div>{activeScene && <aside className="scene-inspector"><div className="inspector-top"><span>SCENE {String(selected + 1).padStart(2, "0")}</span><button onClick={() => setStage("images")}>Open in Frames ↗</button></div><label>Scene title<input value={activeScene.title} onChange={(event) => updateScene(activeScene.id, { title: event.target.value })} /></label><label>Story beat<textarea value={activeScene.beat} onChange={(event) => updateScene(activeScene.id, { beat: event.target.value })} /></label><div className="two-fields"><label>Duration<input type="number" min="1" max="30" value={activeScene.duration} onChange={(event) => updateScene(activeScene.id, { duration: Number(event.target.value) })} /></label><label>Shot<input value={activeScene.shot} onChange={(event) => updateScene(activeScene.id, { shot: event.target.value })} /></label></div><div className="prompt-preview"><span>VISUAL DIRECTION</span><p>{activeScene.imagePrompt}</p><button onClick={() => copy(activeScene.imagePrompt, "Image prompt")}>Copy prompt</button></div></aside>}</div><div className="continue-bar"><span><b>Story spine:</b> Recognition → tenderness → integration</span><button className="primary-button" onClick={() => setStage("images")}>Create the frames <span>→</span></button></div></div>}
+        {stage === "scenes" && <div className="scene-view view-enter"><div className="stage-header"><div><div className="section-kicker"><span>02</span> STORY MAP</div><h1>Your idea, shaped into scenes.</h1><p>Each scene carries one emotional beat and one visual job. Click any card to refine it.</p></div><div className="runtime"><small>EST. RUNTIME</small><strong>00:{String(totalSeconds).padStart(2, "0")}</strong><span>{scenes.length} scenes · 16:9</span></div></div><div className="scene-layout"><div className="scene-list">{scenes.map((scene, index) => <button key={scene.id} className={`scene-card ${selected === index ? "selected" : ""}`} onClick={() => setSelected(index)}><span className="grip">⠿</span><span className={`scene-thumb ${sceneLooks[index % sceneLooks.length]}`}><i>{String(index + 1).padStart(2, "0")}</i></span><span className="scene-copy"><small>SCENE {String(index + 1).padStart(2, "0")}</small><b>{scene.title}</b><em>{scene.beat}</em></span><span className="scene-meta"><b>{scene.duration}s</b><small>{scene.shot.split(" · ")[0]}</small></span></button>)}<button className="add-scene" onClick={() => { const id = Math.max(0, ...scenes.map((scene) => scene.id)) + 1; setScenes([...scenes, { id, title: "New story beat", beat: "Describe what changes in this moment.", duration: 5, shot: "Slow push · medium", imagePrompt: "Cinematic story frame, Black lead character, emotionally precise, 16:9", motionPrompt: "Slow, motivated camera movement. Preserve identity and composition.", imageReady: false, motionReady: false, characterIds: activeCharacters.map((character) => character.id), locationId: activeLocations[0]?.id }]); setSelected(scenes.length); }}><span>＋</span> Add a scene</button></div>{activeScene && <aside className="scene-inspector"><div className="inspector-top"><span>SCENE {String(selected + 1).padStart(2, "0")}</span><button onClick={() => setStage("images")}>Open in Frames ↗</button></div><label>Scene title<input value={activeScene.title} onChange={(event) => updateScene(activeScene.id, { title: event.target.value })} /></label><label>Story beat<textarea value={activeScene.beat} onChange={(event) => updateScene(activeScene.id, { beat: event.target.value })} /></label><div className="two-fields"><label>Duration<input type="number" min="1" max="30" value={activeScene.duration} onChange={(event) => updateScene(activeScene.id, { duration: Number(event.target.value) })} /></label><label>Shot<input value={activeScene.shot} onChange={(event) => updateScene(activeScene.id, { shot: event.target.value })} /></label></div>{(activeCharacters.length > 0 || activeLocations.length > 0) && <div className="scene-cast"><span>WHO&rsquo;S IN THIS SCENE</span>{activeCharacters.length > 0 && <div className="scene-cast-chips">{activeCharacters.map((character) => { const checked = (activeScene.characterIds ?? []).includes(character.id); return <label key={character.id} className={`scene-cast-chip ${checked ? "selected" : ""}`}><input type="checkbox" checked={checked} onChange={() => updateScene(activeScene.id, { characterIds: checked ? (activeScene.characterIds ?? []).filter((entry) => entry !== character.id) : [...(activeScene.characterIds ?? []), character.id] })} />{character.name}</label>; })}</div>}{activeLocations.length > 0 && <label>Setting<select value={activeScene.locationId ?? ""} onChange={(event) => updateScene(activeScene.id, { locationId: event.target.value || undefined })}><option value="">None</option>{activeLocations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>}</div>}<div className="prompt-preview"><span>VISUAL DIRECTION</span><p>{activeScene.imagePrompt}</p><button onClick={() => copy(activeScene.imagePrompt, "Image prompt")}>Copy prompt</button></div></aside>}</div><div className="continue-bar"><span><b>Story spine:</b> Recognition → tenderness → integration</span><button className="primary-button" onClick={() => setStage("images")}>Create the frames <span>→</span></button></div></div>}
 
         {stage === "images" && <div className="asset-view view-enter"><div className="stage-header compact"><div><div className="section-kicker"><span>03</span> KEY FRAMES</div><h1>Give every scene its world.</h1><p>Prompts share the same character and visual DNA so the film feels like one memory, not four different generations.</p></div><div className={`connection-chip ${connectedProviders.openai ? "connected" : ""}`}><span className="openai-mark">✺</span><div><b>ChatGPT Images</b><small>{connectedProviders.openai ? "Your key is connected" : "Bring your own API key"}</small></div><button onClick={() => setShowConnections(true)}>Manage</button></div></div><div className="asset-grid">{scenes.map((scene, index) => <article className="asset-card" key={scene.id}><div className={`asset-preview ${sceneLooks[index % sceneLooks.length]} ${scene.imageReady ? "ready" : ""}`} style={scene.imageUrl ? { backgroundImage: `url(${scene.imageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}><span>SCENE {String(index + 1).padStart(2, "0")}</span>{scene.imageReady ? scene.imageUrl ? null : <div className="frame-art"><i /><i /><i /></div> : <div className="empty-frame">✦<small>Frame not generated</small></div>}<button onClick={() => setSelected(index)}>•••</button></div><div className="asset-info"><b>{scene.title}</b><p>{scene.imagePrompt}</p><div><button onClick={() => copy(scene.imagePrompt, "Image prompt")}>Copy</button><button className="generate" disabled={generatingSceneId === scene.id} onClick={() => generateFrame(scene.id)}>{generatingSceneId === scene.id ? "Generating…" : scene.imageReady ? "Regenerate" : "Generate frame"} <span>✺</span></button></div></div></article>)}</div><div className="continue-bar"><span><b>{readyImages}/{scenes.length}</b> frames ready</span><button className="primary-button" onClick={() => setStage("motion")}>Plan the motion <span>→</span></button></div></div>}
 
         {stage === "motion" && <div className="motion-view view-enter"><div className="stage-header compact"><div><div className="section-kicker"><span>04</span> MOTION DIRECTION</div><h1>Motion with a reason.</h1><p>MuseFlow sends each frame and its motion direction to Higgsfield, which renders a real video clip.</p></div><div className={`connection-chip higgs ${connectedProviders.higgsfield ? "connected" : ""}`}><span>H</span><div><b>Higgsfield</b><small>{connectedProviders.higgsfield ? "Your key is connected" : "Bring your own API key"}</small></div><button onClick={() => setShowConnections(true)}>Manage</button></div></div><div className="motion-list">{scenes.map((scene, index) => <article key={scene.id} className="motion-row"><div className={`motion-still ${sceneLooks[index % sceneLooks.length]}`} style={!scene.motionVideoUrl && scene.imageUrl ? { backgroundImage: `url(${scene.imageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}>{scene.motionVideoUrl ? <video src={scene.motionVideoUrl} muted loop autoPlay playsInline /> : <><span>{String(index + 1).padStart(2, "0")}</span>{scene.imageReady ? scene.imageUrl ? null : <div className="mini-subject" /> : <small>NO FRAME</small>}</>}</div><div className="motion-copy"><small>{scene.shot.toUpperCase()}</small><b>{scene.title}</b><p>{scene.motionPrompt}</p><div className="motion-tags"><span>Identity lock</span><span>Calm pacing</span><span>{scene.duration}s</span></div>{scene.motionStatus === "failed" && scene.motionError && <p className="motion-error">{scene.motionError}</p>}</div><div className="motion-actions"><button onClick={() => copy(scene.motionPrompt, "Motion prompt")}>Copy prompt</button><button className={scene.motionReady ? "prepared" : ""} disabled={animatingSceneId === scene.id || !scene.imageReady} onClick={() => generateMotion(scene.id)}>{animatingSceneId === scene.id ? (scene.motionStatus === "in_progress" ? "Rendering…" : "Queued…") : scene.motionReady ? "Regenerate clip" : scene.motionStatus === "failed" ? "Retry animation" : "Animate with Higgsfield"}</button></div></article>)}</div><div className="continue-bar"><span><b>{readyMotion}/{scenes.length}</b> motion clips ready</span><button className="primary-button" onClick={() => setStage("edit")}>Enter the edit room <span>→</span></button></div></div>}
 
-        {stage === "edit" && <div className="edit-view view-enter"><div className="edit-heading"><div><div className="section-kicker"><span>05</span> ROUGH CUT</div><h1>Feel the whole story.</h1></div><div className="edit-actions"><button>Captions</button><button onClick={generateMusicBrief} disabled={isGeneratingMusicBrief}>{isGeneratingMusicBrief ? "Writing…" : musicBrief ? "Regenerate music" : "Music"}</button><button className="primary-button" onClick={exportPlan}>Export for CapCut <span>↗</span></button></div></div><div className="editor-grid"><div className={`viewer ${sceneLooks[selected % sceneLooks.length]}`} style={!activeScene?.motionVideoUrl && activeScene?.imageUrl ? { backgroundImage: `url(${activeScene.imageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}><div className="safe-frame">{activeScene?.motionVideoUrl ? <video key={activeScene.id} src={activeScene.motionVideoUrl} muted loop autoPlay playsInline className="viewer-video" /> : !activeScene?.imageUrl && <div className="viewer-art"><i /><i /><i /></div>}<div className="caption-preview">{activeScene?.beat}</div></div><div className="viewer-controls"><button onClick={() => setSelected(Math.max(0, selected - 1))}>◁</button><button className="play" onClick={() => setIsPlaying(!isPlaying)}>{isPlaying ? "Ⅱ" : "▶"}</button><button onClick={() => setSelected(Math.min(scenes.length - 1, selected + 1))}>▷</button><span>00:{String(scenes.slice(0, selected).reduce((sum, scene) => sum + scene.duration, 0)).padStart(2, "0")} / 00:{String(totalSeconds).padStart(2, "0")}</span><button>▣</button></div></div><aside className="cut-notes"><span>CUT NOTES</span><h3>{activeScene?.title}</h3><p>Let this beat breathe. Cut on the emotional action, not just the camera movement.</p><label>Transition<select defaultValue="Dissolve"><option>Dissolve</option><option>Hard cut</option><option>Fade through black</option></select></label><label>Voiceover<textarea placeholder="Add the line that belongs over this scene…" /></label><button onClick={() => flash("Cut note saved.")}>Save note</button></aside></div><div className="timeline"><div className="timeline-ruler"><span>00:00</span><span>00:05</span><span>00:10</span><span>00:15</span><span>00:{String(totalSeconds).padStart(2, "0")}</span></div><div className="track"><b>VIDEO</b><div className="clips">{scenes.map((scene, index) => <button key={scene.id} style={{ flex: scene.duration }} className={`${sceneLooks[index % sceneLooks.length]} ${selected === index ? "selected" : ""}`} onClick={() => setSelected(index)}><span>{index + 1}</span>{scene.title}</button>)}</div></div><div className="track audio"><b>VOICE</b><div className="waveform">{Array.from({ length: 44 }).map((_, index) => <i key={index} style={{ height: `${7 + ((index * 13) % 21)}px` }} />)}</div></div><div className="track music"><b>MUSIC</b>{musicBrief ? <div className="music-brief"><pre>{musicBrief}</pre><button onClick={() => copy(musicBrief, "Music brief")}>Copy</button></div> : <div className="music-empty"><span>No music brief yet</span><button onClick={generateMusicBrief} disabled={isGeneratingMusicBrief}>{isGeneratingMusicBrief ? "Writing…" : "Generate with AI"}</button></div>}</div></div></div>}
+        {stage === "edit" && <div className="edit-view view-enter"><div className="edit-heading"><div><div className="section-kicker"><span>05</span> ROUGH CUT</div><h1>Feel the whole story.</h1></div><div className="edit-actions"><button className={showCaptions ? "active" : ""} onClick={() => setShowCaptions((current) => !current)}>{showCaptions ? "Hide captions" : "Show captions"}</button><button onClick={generateMusicBrief} disabled={isGeneratingMusicBrief}>{isGeneratingMusicBrief ? "Writing…" : musicBrief ? "Regenerate music" : "Music"}</button><button className="primary-button" onClick={exportPlan}>Export for CapCut <span>↗</span></button></div></div><div className="editor-grid"><div className={`viewer ${sceneLooks[selected % sceneLooks.length]}`} style={!activeScene?.motionVideoUrl && activeScene?.imageUrl ? { backgroundImage: `url(${activeScene.imageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}><div className="safe-frame">{activeScene?.motionVideoUrl ? <video key={activeScene.id} src={activeScene.motionVideoUrl} muted loop autoPlay playsInline className="viewer-video" /> : !activeScene?.imageUrl && <div className="viewer-art"><i /><i /><i /></div>}{showCaptions && <div className="caption-preview">{activeScene?.beat}</div>}</div><div className="viewer-controls"><button onClick={() => setSelected(Math.max(0, selected - 1))}>◁</button><button className="play" onClick={() => setIsPlaying(!isPlaying)}>{isPlaying ? "Ⅱ" : "▶"}</button><button onClick={() => setSelected(Math.min(scenes.length - 1, selected + 1))}>▷</button><span>00:{String(scenes.slice(0, selected).reduce((sum, scene) => sum + scene.duration, 0)).padStart(2, "0")} / 00:{String(totalSeconds).padStart(2, "0")}</span><button>▣</button></div></div><aside className="cut-notes"><span>CUT NOTES</span><h3>{activeScene?.title}</h3><p>Let this beat breathe. Cut on the emotional action, not just the camera movement.</p><label>Transition<select defaultValue="Dissolve"><option>Dissolve</option><option>Hard cut</option><option>Fade through black</option></select></label><label>Voiceover<textarea placeholder="Add the line that belongs over this scene…" /></label><button onClick={() => flash("Cut note saved.")}>Save note</button></aside></div><div className="timeline"><div className="timeline-ruler"><span>00:00</span><span>00:05</span><span>00:10</span><span>00:15</span><span>00:{String(totalSeconds).padStart(2, "0")}</span></div><div className="track"><b>VIDEO</b><div className="clips">{scenes.map((scene, index) => <button key={scene.id} style={{ flex: scene.duration }} className={`${sceneLooks[index % sceneLooks.length]} ${selected === index ? "selected" : ""}`} onClick={() => setSelected(index)}><span>{index + 1}</span>{scene.title}</button>)}</div></div><div className="track audio"><b>VOICE</b><div className="waveform">{Array.from({ length: 44 }).map((_, index) => <i key={index} style={{ height: `${7 + ((index * 13) % 21)}px` }} />)}</div></div><div className="track music"><b>MUSIC</b>{musicBrief ? <div className="music-brief"><pre>{musicBrief}</pre><button onClick={() => copy(musicBrief, "Music brief")}>Copy</button></div> : <div className="music-empty"><span>No music brief yet</span><button onClick={generateMusicBrief} disabled={isGeneratingMusicBrief}>{isGeneratingMusicBrief ? "Writing…" : "Generate with AI"}</button></div>}</div></div></div>}
       </section></div>
 
     {showConnections && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowConnections(false)}><section className="connection-modal" role="dialog" aria-modal="true" aria-label="Creative tool connections" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowConnections(false)}>×</button><div className="section-kicker"><span>⌁</span> BRING YOUR OWN KEYS</div><h2>Use your creative accounts.</h2><p>Each person can connect their own provider credentials. Keys are kept only in this browser session, cleared when the session closes, and never saved inside a MuseFlow project.</p>
