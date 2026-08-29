@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = "https://nkysggbnudwvrmlhushm.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_R-LM9dMn3a24Tm7cdbP0LA_lgZ27GdT";
+export const SUPABASE_URL = "https://nkysggbnudwvrmlhushm.supabase.co";
+export const SUPABASE_ANON_KEY = "sb_publishable_R-LM9dMn3a24Tm7cdbP0LA_lgZ27GdT";
 const MEDIA_BUCKET = "museflow-media";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
