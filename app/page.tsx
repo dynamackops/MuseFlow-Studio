@@ -92,7 +92,30 @@ export default function Home() {
   const readyMotion = scenes.filter((scene) => scene.motionReady).length;
   const activeScene = scenes[selected] ?? scenes[0];
   function flash(message: string) { setToast(message); window.setTimeout(() => setToast(""), 2300); }
-  function createStoryMap() { if (!idea.trim()) return flash("Add your story idea first."); setIsBuilding(true); window.setTimeout(() => { const next = buildScenes(idea); setScenes(next); setSelected(0); setIsBuilding(false); setStage("scenes"); flash(`${next.length} scenes mapped from your idea.`); }, 850); }
+  async function createStoryMap() {
+    if (!idea.trim()) return flash("Add your story idea first.");
+    setIsBuilding(true);
+    const apiKey = window.sessionStorage.getItem("museflow-openai-key");
+    try {
+      if (!apiKey) throw new Error("no-key");
+      const response = await fetch("/api/generate-scenes", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ idea }) });
+      const result = await response.json() as { scenes?: Array<Omit<Scene, "id" | "imageReady" | "motionReady">>; error?: string };
+      if (!response.ok || !result.scenes?.length) throw new Error(result.error ?? "generation-failed");
+      const next: Scene[] = result.scenes.map((scene, index) => ({ ...scene, id: index + 1, imageReady: false, motionReady: false }));
+      setScenes(next);
+      setSelected(0);
+      setStage("scenes");
+      flash(`${next.length} scenes mapped by ChatGPT.`);
+    } catch (error) {
+      const next = buildScenes(idea);
+      setScenes(next);
+      setSelected(0);
+      setStage("scenes");
+      flash(error instanceof Error && error.message !== "no-key" && error.message !== "generation-failed" ? error.message : apiKey ? "ChatGPT scene mapping failed, used the offline splitter instead." : "Connect your OpenAI key for AI scene mapping — used the offline splitter for now.");
+    } finally {
+      setIsBuilding(false);
+    }
+  }
   function updateScene(id: number, updates: Partial<Scene>) { setScenes((current) => current.map((scene) => scene.id === id ? { ...scene, ...updates } : scene)); }
   async function copy(text: string, label: string) { await navigator.clipboard?.writeText(text); flash(`${label} copied.`); }
   async function generateFrame(id: number) {
