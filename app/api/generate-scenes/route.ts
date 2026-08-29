@@ -6,7 +6,8 @@ Rules:
 - "duration" is seconds of screen time, an integer between 4 and 8.
 - "shot" is a short camera direction like "Slow dolly in · wide" or "Push in · close-up".
 - "imagePrompt" describes one cinematic still: consistent lead character design across every scene, midnight indigo and celestial gold palette, restrained magical realism, soft volumetric light, 16:9. Do not invent a different character per scene.
-- "motionPrompt" describes how to animate that still: one motivated camera move, one clear emotional action, explicit instruction to preserve the character's face, wardrobe, and composition.`;
+- "motionPrompt" describes how to animate that still: one motivated camera move, one clear emotional action, explicit instruction to preserve the character's face, wardrobe, and composition.
+- When named characters are provided, every scene must feature them by name and by their exact given description, verbatim, inside "imagePrompt" — never substitute a different appearance or a generic description.`;
 
 const SCENE_SCHEMA = {
   type: "object",
@@ -41,13 +42,19 @@ export async function POST(request: Request) {
   if (!apiKey) return Response.json({ error: "Connect an OpenAI API key first." }, { status: 401 });
 
   let idea = "";
+  let characters: Array<{ name: string; description: string }> = [];
   try {
-    const body = await request.json() as { idea?: string };
+    const body = await request.json() as { idea?: string; characters?: Array<{ name: string; description: string }> };
     idea = body.idea?.trim() ?? "";
+    characters = body.characters ?? [];
   } catch {
     return Response.json({ error: "The story idea could not be read." }, { status: 400 });
   }
   if (!idea) return Response.json({ error: "Add a story idea first." }, { status: 400 });
+
+  const castNote = characters.length
+    ? `\n\nCast to use (name — description, verbatim in every imagePrompt):\n${characters.map((c) => `- ${c.name} — ${c.description}`).join("\n")}`
+    : "";
 
   const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -55,7 +62,7 @@ export async function POST(request: Request) {
     body: JSON.stringify({
       model: "gpt-4.1-mini",
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: SYSTEM_PROMPT + castNote },
         { role: "user", content: idea },
       ],
       response_format: { type: "json_schema", json_schema: { name: "scene_map", strict: true, schema: SCENE_SCHEMA } },

@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
 
-type Stage = "idea" | "scenes" | "images" | "motion" | "edit";
+type Stage = "cast" | "idea" | "scenes" | "images" | "motion" | "edit";
 type MotionStatus = "idle" | "queued" | "in_progress" | "failed";
 type Scene = { id: number; title: string; beat: string; duration: number; shot: string; imagePrompt: string; motionPrompt: string; imageReady: boolean; motionReady: boolean; imageUrl?: string; motionVideoUrl?: string; motionStatus?: MotionStatus; motionError?: string };
+type Character = { id: string; name: string; description: string; referenceImageUrl?: string };
 type ApiProvider = "openai" | "higgsfield";
 type SpeechResult = { 0: { transcript: string }; isFinal: boolean; length: number };
 type SpeechEvent = { resultIndex: number; results: ArrayLike<SpeechResult> };
@@ -30,7 +32,7 @@ const starterScenes: Scene[] = [
 ];
 
 const nav: Array<{ id: Stage; label: string; eyebrow: string }> = [
-  { id: "idea", label: "Story spark", eyebrow: "01" }, { id: "scenes", label: "Scene map", eyebrow: "02" }, { id: "images", label: "Frames", eyebrow: "03" }, { id: "motion", label: "Motion", eyebrow: "04" }, { id: "edit", label: "Edit room", eyebrow: "05" },
+  { id: "cast", label: "Cast", eyebrow: "✦" }, { id: "idea", label: "Story spark", eyebrow: "01" }, { id: "scenes", label: "Scene map", eyebrow: "02" }, { id: "images", label: "Frames", eyebrow: "03" }, { id: "motion", label: "Motion", eyebrow: "04" }, { id: "edit", label: "Edit room", eyebrow: "05" },
 ];
 const sceneLooks = ["look-one", "look-two", "look-three", "look-four", "look-five"];
 
@@ -62,21 +64,36 @@ export default function Home() {
   const [animatingSceneId, setAnimatingSceneId] = useState<number | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [characters, setCharacters] = useState<Character[]>([]);
+  const [leadCharacterIds, setLeadCharacterIds] = useState<string[]>([]);
+  const [charFormId, setCharFormId] = useState<string | null>(null);
+  const [charFormName, setCharFormName] = useState("");
+  const [charFormDescription, setCharFormDescription] = useState("");
+  const [charFormReferenceUrl, setCharFormReferenceUrl] = useState("");
+  const [isSavingCharacter, setIsSavingCharacter] = useState(false);
+  const [isUploadingReference, setIsUploadingReference] = useState(false);
+  const [isGeneratingReference, setIsGeneratingReference] = useState(false);
   const speechRef = useRef<SpeechRecognitionLike | null>(null);
   const dictationBaseRef = useRef("");
   const saveTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     (async () => {
+      try {
+        const response = await fetch("/api/characters");
+        const result = await response.json() as { characters?: Character[] };
+        if (response.ok && result.characters) setCharacters(result.characters);
+      } catch { /* cast library stays empty */ }
       const savedId = window.localStorage.getItem("museflow-project-id");
       if (savedId) {
         try {
           const response = await fetch(`/api/project?id=${encodeURIComponent(savedId)}`);
-          const result = await response.json() as { project?: { id: string; name: string; idea: string } | null; scenes?: Scene[] };
+          const result = await response.json() as { project?: { id: string; name: string; idea: string; leadCharacterIds: string[] } | null; scenes?: Scene[] };
           if (response.ok && result.project) {
             setProjectId(result.project.id);
             setIdea(result.project.idea || initialIdea);
             setProjectName(result.project.name || "Untitled film");
+            setLeadCharacterIds(result.project.leadCharacterIds ?? []);
             if (result.scenes?.length) setScenes(result.scenes);
           } else {
             window.localStorage.removeItem("museflow-project-id");
@@ -99,7 +116,7 @@ export default function Home() {
     saveTimerRef.current = window.setTimeout(async () => {
       setSaveState("saving");
       try {
-        const response = await fetch("/api/project", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: projectId ?? undefined, name: projectName, idea, scenes }) });
+        const response = await fetch("/api/project", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: projectId ?? undefined, name: projectName, idea, scenes, leadCharacterIds }) });
         const result = await response.json() as { id?: string; error?: string };
         if (!response.ok || !result.id) throw new Error(result.error ?? "Save failed.");
         if (result.id !== projectId) {
@@ -112,20 +129,85 @@ export default function Home() {
       }
     }, 1200);
     return () => window.clearTimeout(saveTimerRef.current);
-  }, [hydrated, idea, projectName, scenes, projectId]);
+  }, [hydrated, idea, projectName, scenes, projectId, leadCharacterIds]);
 
   const totalSeconds = useMemo(() => scenes.reduce((sum, scene) => sum + scene.duration, 0), [scenes]);
   const readyImages = scenes.filter((scene) => scene.imageReady).length;
   const readyMotion = scenes.filter((scene) => scene.motionReady).length;
   const activeScene = scenes[selected] ?? scenes[0];
+  const activeCharacters = useMemo(() => characters.filter((character) => leadCharacterIds.includes(character.id)), [characters, leadCharacterIds]);
+  const primaryReferenceUrl = activeCharacters.find((character) => character.referenceImageUrl)?.referenceImageUrl;
   function flash(message: string) { setToast(message); window.setTimeout(() => setToast(""), 2300); }
+  function toggleLeadCharacter(id: string) { setLeadCharacterIds((current) => current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]); }
+  function resetCharacterForm() { setCharFormId(null); setCharFormName(""); setCharFormDescription(""); setCharFormReferenceUrl(""); }
+  function loadCharacterIntoForm(character: Character) { setCharFormId(character.id); setCharFormName(character.name); setCharFormDescription(character.description); setCharFormReferenceUrl(character.referenceImageUrl ?? ""); }
+  async function handleReferenceUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setIsUploadingReference(true);
+    try {
+      const fileDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Could not read this file."));
+        reader.readAsDataURL(file);
+      });
+      const response = await fetch("/api/characters/reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileDataUrl }) });
+      const result = await response.json() as { referenceImageUrl?: string; error?: string };
+      if (!response.ok || !result.referenceImageUrl) throw new Error(result.error ?? "Upload failed.");
+      setCharFormReferenceUrl(result.referenceImageUrl);
+      flash("Reference photo uploaded.");
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Upload failed.");
+    } finally {
+      setIsUploadingReference(false);
+    }
+  }
+  async function generateCharacterReference() {
+    const apiKey = window.sessionStorage.getItem("museflow-openai-key");
+    if (!apiKey) {
+      setShowConnections(true);
+      flash("Connect your OpenAI API key to generate a reference.");
+      return;
+    }
+    if (!charFormDescription.trim()) return flash("Describe this character first.");
+    setIsGeneratingReference(true);
+    try {
+      const response = await fetch("/api/generate-character", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ name: charFormName || "Character", description: charFormDescription }) });
+      const result = await response.json() as { referenceImageUrl?: string; error?: string };
+      if (!response.ok || !result.referenceImageUrl) throw new Error(result.error ?? "Reference generation failed.");
+      setCharFormReferenceUrl(result.referenceImageUrl);
+      flash("Reference generated.");
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Reference generation failed.");
+    } finally {
+      setIsGeneratingReference(false);
+    }
+  }
+  async function saveCharacter() {
+    if (!charFormName.trim()) return flash("Give this character a name first.");
+    setIsSavingCharacter(true);
+    try {
+      const response = await fetch("/api/characters", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: charFormId ?? undefined, name: charFormName, description: charFormDescription, referenceImageUrl: charFormReferenceUrl || undefined }) });
+      const result = await response.json() as Character & { error?: string };
+      if (!response.ok || !result.id) throw new Error(result.error ?? "Save failed.");
+      setCharacters((current) => charFormId ? current.map((character) => character.id === result.id ? result : character) : [...current, result]);
+      flash(`${result.name} saved to your cast.`);
+      resetCharacterForm();
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Save failed.");
+    } finally {
+      setIsSavingCharacter(false);
+    }
+  }
   async function createStoryMap() {
     if (!idea.trim()) return flash("Add your story idea first.");
     setIsBuilding(true);
     const apiKey = window.sessionStorage.getItem("museflow-openai-key");
     try {
       if (!apiKey) throw new Error("no-key");
-      const response = await fetch("/api/generate-scenes", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ idea }) });
+      const response = await fetch("/api/generate-scenes", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ idea, characters: activeCharacters.map((character) => ({ name: character.name, description: character.description })) }) });
       const result = await response.json() as { scenes?: Array<Omit<Scene, "id" | "imageReady" | "motionReady">>; error?: string };
       if (!response.ok || !result.scenes?.length) throw new Error(result.error ?? "generation-failed");
       const next: Scene[] = result.scenes.map((scene, index) => ({ ...scene, id: index + 1, imageReady: false, motionReady: false }));
@@ -157,7 +239,7 @@ export default function Home() {
     setGeneratingSceneId(id);
     flash("ChatGPT Images is creating your frame…");
     try {
-      const response = await fetch("/api/generate-image", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ prompt: scene.imagePrompt }) });
+      const response = await fetch("/api/generate-image", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ prompt: scene.imagePrompt, characterReferenceUrl: primaryReferenceUrl }) });
       const result = await response.json() as { imageUrl?: string; error?: string };
       if (!response.ok || !result.imageUrl) throw new Error(result.error ?? "Image generation failed.");
       updateScene(id, { imageReady: true, imageUrl: result.imageUrl });
@@ -270,6 +352,39 @@ export default function Home() {
     <div className="workspace"><aside className="rail" aria-label="Creation pipeline"><div className="rail-label">PIPELINE</div><nav>{nav.map((item, index) => { const activeIndex = nav.findIndex((entry) => entry.id === stage); return <button key={item.id} className={`${stage === item.id ? "active" : ""} ${index < activeIndex ? "complete" : ""}`} onClick={() => setStage(item.id)}><span>{index < activeIndex ? "✓" : item.eyebrow}</span><b>{item.label}</b></button>; })}</nav><div className="rail-footer"><div className="avatar">MF</div><div><b>Demo studio</b><small>Local workspace</small></div></div></aside>
 
       <section className="stage-area">
+        {stage === "cast" && <div className="cast-view view-enter">
+          <div className="section-kicker"><span>✦</span> YOUR CAST</div>
+          <h1>Bring your characters, once.</h1>
+          <p className="lede">Build a character here and reuse them in any MuseFlow project. Check a character to attach them to this project — every scene, frame, and motion clip generated while they&rsquo;re checked stays locked to their look.</p>
+          <div className="cast-layout">
+            <div className="cast-grid">
+              {characters.length === 0 && <p className="cast-empty">No characters yet — create one to the right.</p>}
+              {characters.map((character) => <article key={character.id} className={`cast-card ${leadCharacterIds.includes(character.id) ? "selected" : ""}`}>
+                <div className="cast-thumb" style={character.referenceImageUrl ? { backgroundImage: `url(${character.referenceImageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}>{!character.referenceImageUrl && <span>✦</span>}</div>
+                <div className="cast-copy"><b>{character.name}</b><p>{character.description}</p></div>
+                <div className="cast-actions">
+                  <label className="cast-toggle"><input type="checkbox" checked={leadCharacterIds.includes(character.id)} onChange={() => toggleLeadCharacter(character.id)} /> Use in this project</label>
+                  <button onClick={() => loadCharacterIntoForm(character)}>Edit</button>
+                </div>
+              </article>)}
+            </div>
+            <aside className="cast-form">
+              <span>{charFormId ? "EDIT CHARACTER" : "NEW CHARACTER"}</span>
+              <label>Name<input value={charFormName} onChange={(event) => setCharFormName(event.target.value)} placeholder="Aria Nightshade" /></label>
+              <label>Description<textarea value={charFormDescription} onChange={(event) => setCharFormDescription(event.target.value)} placeholder="A weathered lighthouse keeper, deep brown skin, silver locs pulled back, long indigo coat with brass buttons." /></label>
+              <div className="cast-reference">{charFormReferenceUrl ? <img src={charFormReferenceUrl} alt="Character reference" /> : <div className="cast-reference-empty">No reference yet</div>}</div>
+              <div className="cast-reference-actions">
+                <label className="upload-button">{isUploadingReference ? "Uploading…" : "Upload photo"}<input type="file" accept="image/*" hidden onChange={handleReferenceUpload} disabled={isUploadingReference} /></label>
+                <button onClick={generateCharacterReference} disabled={isGeneratingReference || !charFormDescription.trim()}>{isGeneratingReference ? "Generating…" : "Generate reference"}</button>
+              </div>
+              <div className="cast-form-actions">
+                {charFormId && <button onClick={resetCharacterForm}>Cancel</button>}
+                <button className="primary-button" onClick={saveCharacter} disabled={isSavingCharacter || !charFormName.trim()}>{isSavingCharacter ? "Saving…" : charFormId ? "Update character" : "Save character"}</button>
+              </div>
+            </aside>
+          </div>
+        </div>}
+
         {stage === "idea" && <div className="idea-view view-enter"><div className="section-kicker"><span>01</span> START WITH THE FEELING</div><h1>Tell me the movie in your head.</h1><p className="lede">Messy is welcome. Type it, speak it, or paste the poem that started it. MuseFlow will find the beats without flattening your voice.</p><div className={`idea-card ${isListening ? "listening" : ""}`}><div className="idea-toolbar"><span>STORY BRAIN DUMP</span><div className="idea-tools"><span>{idea.length} characters</span><button className={`dictate-button ${isListening ? "active" : ""}`} onClick={toggleDictation} disabled={!speechSupported} aria-pressed={isListening} aria-label={isListening ? "Stop dictating story" : "Dictate story spark"}><i>{isListening ? "■" : "●"}</i>{isListening ? "Listening — tap to stop" : speechSupported ? "Dictate story" : "Dictation unavailable"}</button></div></div><textarea value={idea} onChange={(event) => setIdea(event.target.value)} placeholder="I keep imagining…" aria-label="Story spark" /><div className="dictation-status" aria-live="polite">{isListening ? <><span /> Listening… speak naturally. Your words will appear here.</> : "Use the microphone when the idea is easier to say than type."}</div><div className="idea-footer"><div className="tone-pills"><button className="selected">Poetic</button><button>Cinematic</button><button>Low-stimulation</button></div><button className="primary-button" onClick={createStoryMap} disabled={isBuilding}>{isBuilding ? "Finding the story beats…" : "Build my scene map"}<span>→</span></button></div></div><div className="promise-row"><span>✦ Your voice stays central</span><span>◌ Character continuity baked in</span><span>⌁ Edit every decision</span></div></div>}
 
         {stage === "scenes" && <div className="scene-view view-enter"><div className="stage-header"><div><div className="section-kicker"><span>02</span> STORY MAP</div><h1>Your idea, shaped into scenes.</h1><p>Each scene carries one emotional beat and one visual job. Click any card to refine it.</p></div><div className="runtime"><small>EST. RUNTIME</small><strong>00:{String(totalSeconds).padStart(2, "0")}</strong><span>{scenes.length} scenes · 16:9</span></div></div><div className="scene-layout"><div className="scene-list">{scenes.map((scene, index) => <button key={scene.id} className={`scene-card ${selected === index ? "selected" : ""}`} onClick={() => setSelected(index)}><span className="grip">⠿</span><span className={`scene-thumb ${sceneLooks[index % sceneLooks.length]}`}><i>{String(index + 1).padStart(2, "0")}</i></span><span className="scene-copy"><small>SCENE {String(index + 1).padStart(2, "0")}</small><b>{scene.title}</b><em>{scene.beat}</em></span><span className="scene-meta"><b>{scene.duration}s</b><small>{scene.shot.split(" · ")[0]}</small></span></button>)}<button className="add-scene" onClick={() => { const id = Math.max(0, ...scenes.map((scene) => scene.id)) + 1; setScenes([...scenes, { id, title: "New story beat", beat: "Describe what changes in this moment.", duration: 5, shot: "Slow push · medium", imagePrompt: "Cinematic story frame, Black lead character, emotionally precise, 16:9", motionPrompt: "Slow, motivated camera movement. Preserve identity and composition.", imageReady: false, motionReady: false }]); setSelected(scenes.length); }}><span>＋</span> Add a scene</button></div>{activeScene && <aside className="scene-inspector"><div className="inspector-top"><span>SCENE {String(selected + 1).padStart(2, "0")}</span><button onClick={() => setStage("images")}>Open in Frames ↗</button></div><label>Scene title<input value={activeScene.title} onChange={(event) => updateScene(activeScene.id, { title: event.target.value })} /></label><label>Story beat<textarea value={activeScene.beat} onChange={(event) => updateScene(activeScene.id, { beat: event.target.value })} /></label><div className="two-fields"><label>Duration<input type="number" min="1" max="30" value={activeScene.duration} onChange={(event) => updateScene(activeScene.id, { duration: Number(event.target.value) })} /></label><label>Shot<input value={activeScene.shot} onChange={(event) => updateScene(activeScene.id, { shot: event.target.value })} /></label></div><div className="prompt-preview"><span>VISUAL DIRECTION</span><p>{activeScene.imagePrompt}</p><button onClick={() => copy(activeScene.imagePrompt, "Image prompt")}>Copy prompt</button></div></aside>}</div><div className="continue-bar"><span><b>Story spine:</b> Recognition → tenderness → integration</span><button className="primary-button" onClick={() => setStage("images")}>Create the frames <span>→</span></button></div></div>}
