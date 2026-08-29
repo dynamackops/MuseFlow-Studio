@@ -7,7 +7,8 @@ Rules:
 - "shot" is a short camera direction like "Slow dolly in · wide" or "Push in · close-up".
 - "imagePrompt" describes one cinematic still: consistent lead character design across every scene, midnight indigo and celestial gold palette, restrained magical realism, soft volumetric light, 16:9. Do not invent a different character per scene.
 - "motionPrompt" describes how to animate that still: one motivated camera move, one clear emotional action, explicit instruction to preserve the character's face, wardrobe, and composition.
-- When named characters are provided, every scene must feature them by name and by their exact given description, verbatim, inside "imagePrompt" — never substitute a different appearance or a generic description.`;
+- When named characters are provided, every scene must feature them by name and by their exact given description, verbatim, inside "imagePrompt" — never substitute a different appearance or a generic description.
+- When named locations are provided, set every scene in one of them and describe that location by its exact given description, verbatim, inside "imagePrompt".`;
 
 const SCENE_SCHEMA = {
   type: "object",
@@ -43,10 +44,12 @@ export async function POST(request: Request) {
 
   let idea = "";
   let characters: Array<{ name: string; description: string }> = [];
+  let locations: Array<{ name: string; description: string }> = [];
   try {
-    const body = await request.json() as { idea?: string; characters?: Array<{ name: string; description: string }> };
+    const body = await request.json() as { idea?: string; characters?: Array<{ name: string; description: string }>; locations?: Array<{ name: string; description: string }> };
     idea = body.idea?.trim() ?? "";
     characters = body.characters ?? [];
+    locations = body.locations ?? [];
   } catch {
     return Response.json({ error: "The story idea could not be read." }, { status: 400 });
   }
@@ -55,6 +58,9 @@ export async function POST(request: Request) {
   const castNote = characters.length
     ? `\n\nCast to use (name — description, verbatim in every imagePrompt):\n${characters.map((c) => `- ${c.name} — ${c.description}`).join("\n")}`
     : "";
+  const locationNote = locations.length
+    ? `\n\nLocations to use (name — description, verbatim in every imagePrompt):\n${locations.map((l) => `- ${l.name} — ${l.description}`).join("\n")}`
+    : "";
 
   const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -62,7 +68,7 @@ export async function POST(request: Request) {
     body: JSON.stringify({
       model: "gpt-4.1-mini",
       messages: [
-        { role: "system", content: SYSTEM_PROMPT + castNote },
+        { role: "system", content: SYSTEM_PROMPT + castNote + locationNote },
         { role: "user", content: idea },
       ],
       response_format: { type: "json_schema", json_schema: { name: "scene_map", strict: true, schema: SCENE_SCHEMA } },

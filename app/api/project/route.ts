@@ -38,20 +38,28 @@ export async function GET(request: Request) {
     motionVideoUrl: row.motion_video_url ?? undefined,
   }));
 
-  return Response.json({ project: { id: project.id, name: project.name, idea: project.idea, leadCharacterIds: project.lead_character_ids ?? [] }, scenes });
+  return Response.json({
+    project: {
+      id: project.id, name: project.name, idea: project.idea,
+      leadCharacterIds: project.lead_character_ids ?? [],
+      locationIds: project.location_ids ?? [],
+      musicBrief: project.music_brief ?? "",
+    },
+    scenes,
+  });
 }
 
 export async function POST(request: Request) {
-  let body: { id?: string; name?: string; idea?: string; scenes?: ClientScene[]; leadCharacterIds?: string[] };
+  let body: { id?: string; name?: string; idea?: string; scenes?: ClientScene[]; leadCharacterIds?: string[]; locationIds?: string[]; musicBrief?: string };
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: "The project payload could not be read." }, { status: 400 });
   }
-  const { id, name, idea, scenes, leadCharacterIds } = body;
+  const { id, name, idea, scenes, leadCharacterIds, locationIds, musicBrief } = body;
   if (!name || !scenes) return Response.json({ error: "A project name and scenes are required." }, { status: 400 });
 
-  const record = { name, idea, lead_character_ids: leadCharacterIds ?? [] };
+  const record = { name, idea, lead_character_ids: leadCharacterIds ?? [], location_ids: locationIds ?? [], music_brief: musicBrief ?? "" };
   const { data: project, error: upsertError } = id
     ? await supabase.from("projects").update({ ...record, updated_at: new Date().toISOString() }).eq("id", id).select().single()
     : await supabase.from("projects").insert(record).select().single();
