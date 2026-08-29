@@ -1,54 +1,45 @@
 import { uploadMedia } from "../../lib/supabase";
 
+type ReferenceImage = { url: string; name: string; description: string; kind: "character" | "location" };
+
 export async function POST(request: Request) {
   const apiKey = request.headers.get("x-provider-key")?.trim();
   if (!apiKey) return Response.json({ error: "Connect an OpenAI API key first." }, { status: 401 });
 
   let prompt = "";
-  let characterReferenceUrl: string | undefined;
-  let locationReferenceUrl: string | undefined;
-  let castDescriptions: Array<{ name: string; description: string }> = [];
+  let referenceImages: ReferenceImage[] = [];
   try {
-    const body = await request.json() as {
-      prompt?: string; characterReferenceUrl?: string; locationReferenceUrl?: string;
-      castDescriptions?: Array<{ name: string; description: string }>;
-    };
+    const body = await request.json() as { prompt?: string; referenceImages?: ReferenceImage[] };
     prompt = body.prompt?.trim() ?? "";
-    characterReferenceUrl = body.characterReferenceUrl?.trim() || undefined;
-    locationReferenceUrl = body.locationReferenceUrl?.trim() || undefined;
-    castDescriptions = body.castDescriptions ?? [];
+    referenceImages = (body.referenceImages ?? []).filter((entry) => entry.url).slice(0, 16);
   } catch {
     return Response.json({ error: "The image prompt could not be read." }, { status: 400 });
   }
   if (!prompt) return Response.json({ error: "Add an image prompt first." }, { status: 400 });
 
-  // Every attached character/location is named in the text prompt even though
-  // only one reference image can condition the generation, so a scene with
-  // several cast members still gets all of them described, not just the one
-  // whose photo was used.
-  if (castDescriptions.length) {
-    prompt += ` Featuring: ${castDescriptions.map((entry) => `${entry.name} (${entry.description})`).join("; ")}.`;
-  }
-
-  // OpenAI's image-edit endpoint accepts one reference image, so a character's
-  // face takes priority over a location's when both are attached; the
-  // location's look still reaches the model through the text prompt.
-  const referenceUrl = characterReferenceUrl ?? locationReferenceUrl;
-  const referenceLabel = characterReferenceUrl ? "character" : "location";
-
   let upstream: Response;
-  if (referenceUrl) {
-    const referenceResponse = await fetch(referenceUrl);
-    if (!referenceResponse.ok) return Response.json({ error: `Could not load this scene's ${referenceLabel} reference.` }, { status: 502 });
-    const referenceBlob = await referenceResponse.blob();
+  if (referenceImages.length) {
+    // Every attached character/location photo is sent as its own reference
+    // image (OpenAI's edit endpoint accepts up to 16), each called out by
+    // number in the prompt so a multi-character scene locks every face
+    // instead of only the one photo a single-image call would have to pick.
+    const referenceNotes = referenceImages
+      .map((entry, index) => `Reference image ${index + 1} is ${entry.kind === "character" ? "the character" : "the location"} "${entry.name}" (${entry.description}) — match it exactly.`)
+      .join(" ");
+    const fullPrompt = `${prompt} ${referenceNotes}`;
+
     const form = new FormData();
     form.append("model", "gpt-image-1.5");
-    form.append("prompt", referenceLabel === "character"
-      ? `${prompt}. Match the exact face, body, and wardrobe of the reference character image.`
-      : `${prompt}. Match the exact architecture, layout, and color palette of the reference location image.`);
+    form.append("prompt", fullPrompt);
     form.append("size", "1536x1024");
     form.append("quality", "low");
-    form.append("image", referenceBlob, "reference.webp");
+    form.append("input_fidelity", "high");
+    for (const [index, entry] of referenceImages.entries()) {
+      const referenceResponse = await fetch(entry.url);
+      if (!referenceResponse.ok) return Response.json({ error: `Could not load the reference photo for "${entry.name}".` }, { status: 502 });
+      const referenceBlob = await referenceResponse.blob();
+      form.append("image[]", referenceBlob, `reference-${index}.webp`);
+    }
     upstream = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}` },
