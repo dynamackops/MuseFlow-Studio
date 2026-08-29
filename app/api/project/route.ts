@@ -3,13 +3,13 @@ import { supabase } from "../../lib/supabase";
 type ClientScene = {
   id: number; title: string; beat: string; duration: number; shot: string;
   imagePrompt: string; motionPrompt: string; imageReady: boolean; motionReady: boolean;
-  imageUrl?: string; motionVideoUrl?: string;
+  imageUrl?: string; motionVideoUrl?: string; characterIds?: string[]; locationId?: string;
 };
 
 type SceneRow = {
   position: number; title: string; beat: string; duration: number; shot: string;
   image_prompt: string; motion_prompt: string; image_url: string | null; motion_video_url: string | null;
-  image_ready: boolean; motion_ready: boolean;
+  image_ready: boolean; motion_ready: boolean; character_ids: string[] | null; location_id: string | null;
 };
 
 export async function GET(request: Request) {
@@ -36,6 +36,8 @@ export async function GET(request: Request) {
     motionReady: row.motion_ready,
     imageUrl: row.image_url ?? undefined,
     motionVideoUrl: row.motion_video_url ?? undefined,
+    characterIds: row.character_ids ?? [],
+    locationId: row.location_id ?? undefined,
   }));
 
   return Response.json({
@@ -82,6 +84,8 @@ export async function POST(request: Request) {
     motion_video_url: scene.motionVideoUrl ?? null,
     image_ready: scene.imageReady,
     motion_ready: scene.motionReady,
+    character_ids: scene.characterIds ?? [],
+    location_id: scene.locationId ?? null,
   }));
   if (rows.length) {
     const { error: insertError } = await supabase.from("scenes").insert(rows);
@@ -89,4 +93,12 @@ export async function POST(request: Request) {
   }
 
   return Response.json({ id: projectId });
+}
+
+export async function DELETE(request: Request) {
+  const id = new URL(request.url).searchParams.get("id");
+  if (!id) return Response.json({ error: "Missing project id." }, { status: 400 });
+  const { error } = await supabase.from("projects").delete().eq("id", id);
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+  return Response.json({ ok: true });
 }
