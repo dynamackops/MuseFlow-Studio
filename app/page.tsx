@@ -9,6 +9,7 @@ type Scene = { id: number; title: string; beat: string; duration: number; shot: 
 type Character = { id: string; name: string; description: string; referenceImageUrl?: string };
 type Location = { id: string; name: string; description: string; referenceImageUrl?: string };
 type ProjectSummary = { id: string; name: string; idea: string; updatedAt: string };
+type DetectedEntity = { name: string; description: string };
 type ApiProvider = "openai" | "higgsfield";
 type SpeechResult = { 0: { transcript: string }; isFinal: boolean; length: number };
 type SpeechEvent = { resultIndex: number; results: ArrayLike<SpeechResult> };
@@ -51,6 +52,11 @@ export default function Home() {
 function Studio() {
   const [stage, setStage] = useState<Stage>("start");
   const [idea, setIdea] = useState("");
+  const [isAnalyzingBrief, setIsAnalyzingBrief] = useState(false);
+  const [briefCharacters, setBriefCharacters] = useState<DetectedEntity[]>([]);
+  const [briefLocations, setBriefLocations] = useState<DetectedEntity[]>([]);
+  const [addingCharacterName, setAddingCharacterName] = useState<string | null>(null);
+  const [addingLocationName, setAddingLocationName] = useState<string | null>(null);
   const [projectName, setProjectName] = useState("The Last Light");
   const [scenes, setScenes] = useState<Scene[]>(starterScenes);
   const [selected, setSelected] = useState(0);
@@ -387,6 +393,67 @@ function Studio() {
       setIsGeneratingMusicBrief(false);
     }
   }
+  async function handleBriefUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const apiKey = window.sessionStorage.getItem("museflow-openai-key");
+    if (!apiKey) {
+      setShowConnections(true);
+      flash("Connect your OpenAI API key to analyze a document.");
+      return;
+    }
+    setIsAnalyzingBrief(true);
+    try {
+      const fileDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Could not read this file."));
+        reader.readAsDataURL(file);
+      });
+      const response = await fetch("/api/analyze-brief", { method: "POST", headers: { "Content-Type": "application/json", "x-provider-key": apiKey }, body: JSON.stringify({ fileDataUrl }) });
+      const result = await response.json() as { idea?: string; characters?: DetectedEntity[]; locations?: DetectedEntity[]; error?: string };
+      if (!response.ok || !result.idea) throw new Error(result.error ?? "Could not read this document.");
+      setIdea(result.idea);
+      setBriefCharacters(result.characters ?? []);
+      setBriefLocations(result.locations ?? []);
+      flash("Pulled a story idea from your document — review it below.");
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Could not read this document.");
+    } finally {
+      setIsAnalyzingBrief(false);
+    }
+  }
+  async function addDetectedCharacter(entity: DetectedEntity) {
+    setAddingCharacterName(entity.name);
+    try {
+      const response = await fetch("/api/characters", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: entity.name, description: entity.description }) });
+      const result = await response.json() as Character & { error?: string };
+      if (!response.ok || !result.id) throw new Error(result.error ?? "Could not add this character.");
+      setCharacters((current) => [...current, result]);
+      setBriefCharacters((current) => current.filter((item) => item.name !== entity.name));
+      flash(`${result.name} added to your cast.`);
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Could not add this character.");
+    } finally {
+      setAddingCharacterName(null);
+    }
+  }
+  async function addDetectedLocation(entity: DetectedEntity) {
+    setAddingLocationName(entity.name);
+    try {
+      const response = await fetch("/api/locations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: entity.name, description: entity.description }) });
+      const result = await response.json() as Location & { error?: string };
+      if (!response.ok || !result.id) throw new Error(result.error ?? "Could not add this location.");
+      setLocations((current) => [...current, result]);
+      setBriefLocations((current) => current.filter((item) => item.name !== entity.name));
+      flash(`${result.name} added to your settings.`);
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Could not add this location.");
+    } finally {
+      setAddingLocationName(null);
+    }
+  }
   async function createStoryMap() {
     if (!idea.trim()) return flash("Add your story idea first.");
     setIsBuilding(true);
@@ -655,7 +722,7 @@ function Studio() {
           </div>
         </div>}
 
-        {stage === "idea" && <div className="idea-view view-enter"><div className="section-kicker"><span>01</span> START WITH THE FEELING</div><h1>Tell me the movie in your head.</h1><p className="lede">Messy is welcome. Type it, speak it, or paste the poem that started it. MuseFlow will find the beats without flattening your voice.</p><div className={`idea-card ${isListening ? "listening" : ""}`}><div className="idea-toolbar"><span>STORY BRAIN DUMP</span><div className="idea-tools"><span>{idea.length} characters</span><button className={`dictate-button ${isListening ? "active" : ""}`} onClick={toggleDictation} disabled={!speechSupported} aria-pressed={isListening} aria-label={isListening ? "Stop dictating story" : "Dictate story spark"}><i>{isListening ? "■" : "●"}</i>{isListening ? "Listening — tap to stop" : speechSupported ? "Dictate story" : "Dictation unavailable"}</button></div></div><textarea value={idea} onChange={(event) => setIdea(event.target.value)} placeholder="I keep imagining…" aria-label="Story spark" /><div className="dictation-status" aria-live="polite">{isListening ? <><span /> Listening… speak naturally. Your words will appear here.</> : "Use the microphone when the idea is easier to say than type."}</div><div className="idea-footer"><div className="tone-pills"><button className="selected">Poetic</button><button>Cinematic</button><button>Low-stimulation</button></div><button className="primary-button" onClick={createStoryMap} disabled={isBuilding}>{isBuilding ? "Finding the story beats…" : "Build my scene map"}<span>→</span></button></div></div><div className="promise-row"><span>✦ Your voice stays central</span><span>◌ Character continuity baked in</span><span>⌁ Edit every decision</span></div></div>}
+        {stage === "idea" && <div className="idea-view view-enter"><div className="section-kicker"><span>01</span> START WITH THE FEELING</div><h1>Tell me the movie in your head.</h1><p className="lede">Messy is welcome. Type it, speak it, or paste the poem that started it. MuseFlow will find the beats without flattening your voice.</p><div className={`idea-card ${isListening ? "listening" : ""}`}><div className="idea-toolbar"><span>STORY BRAIN DUMP</span><div className="idea-tools"><span>{idea.length} characters</span><label className={`upload-button ${isAnalyzingBrief ? "active" : ""}`}>{isAnalyzingBrief ? "Reading…" : "Upload a doc"}<input type="file" accept=".txt,.md,.docx,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden onChange={handleBriefUpload} disabled={isAnalyzingBrief} /></label><button className={`dictate-button ${isListening ? "active" : ""}`} onClick={toggleDictation} disabled={!speechSupported} aria-pressed={isListening} aria-label={isListening ? "Stop dictating story" : "Dictate story spark"}><i>{isListening ? "■" : "●"}</i>{isListening ? "Listening — tap to stop" : speechSupported ? "Dictate story" : "Dictation unavailable"}</button></div></div><textarea value={idea} onChange={(event) => setIdea(event.target.value)} placeholder="I keep imagining…" aria-label="Story spark" /><div className="dictation-status" aria-live="polite">{isListening ? <><span /> Listening… speak naturally. Your words will appear here.</> : "Use the microphone when the idea is easier to say than type, or upload a script, notes, or a prompt book and MuseFlow will pull the story out of it."}</div><div className="idea-footer"><div className="tone-pills"><button className="selected">Poetic</button><button>Cinematic</button><button>Low-stimulation</button></div><button className="primary-button" onClick={createStoryMap} disabled={isBuilding}>{isBuilding ? "Finding the story beats…" : "Build my scene map"}<span>→</span></button></div></div>{(briefCharacters.length > 0 || briefLocations.length > 0) && <div className="brief-review"><span>FOUND IN YOUR DOCUMENT</span><p>Add any of these to your Cast or Settings so they carry through to scene generation.</p>{briefCharacters.length > 0 && <div className="brief-list"><small>CHARACTERS</small>{briefCharacters.map((entity) => <div key={entity.name} className="brief-item"><div><b>{entity.name}</b><p>{entity.description}</p></div><button onClick={() => addDetectedCharacter(entity)} disabled={addingCharacterName === entity.name}>{addingCharacterName === entity.name ? "Adding…" : "Add to Cast"}</button></div>)}</div>}{briefLocations.length > 0 && <div className="brief-list"><small>LOCATIONS</small>{briefLocations.map((entity) => <div key={entity.name} className="brief-item"><div><b>{entity.name}</b><p>{entity.description}</p></div><button onClick={() => addDetectedLocation(entity)} disabled={addingLocationName === entity.name}>{addingLocationName === entity.name ? "Adding…" : "Add to Settings"}</button></div>)}</div>}</div>}<div className="promise-row"><span>✦ Your voice stays central</span><span>◌ Character continuity baked in</span><span>⌁ Edit every decision</span></div></div>}
 
         {stage === "scenes" && <div className="scene-view view-enter"><div className="stage-header"><div><div className="section-kicker"><span>02</span> STORY MAP</div><h1>Your idea, shaped into scenes.</h1><p>Each scene carries one emotional beat and one visual job. Click any card to refine it.</p></div><div className="runtime"><small>EST. RUNTIME</small><strong>00:{String(totalSeconds).padStart(2, "0")}</strong><span>{scenes.length} scenes · 16:9</span></div></div><div className="scene-layout"><div className="scene-list">{scenes.map((scene, index) => <button key={scene.id} className={`scene-card ${selected === index ? "selected" : ""}`} onClick={() => setSelected(index)}><span className="grip">⠿</span><span className={`scene-thumb ${sceneLooks[index % sceneLooks.length]}`}><i>{String(index + 1).padStart(2, "0")}</i></span><span className="scene-copy"><small>SCENE {String(index + 1).padStart(2, "0")}</small><b>{scene.title}</b><em>{scene.beat}</em></span><span className="scene-meta"><b>{scene.duration}s</b><small>{scene.shot.split(" · ")[0]}</small></span></button>)}<button className="add-scene" onClick={() => { const id = Math.max(0, ...scenes.map((scene) => scene.id)) + 1; setScenes([...scenes, { id, title: "New story beat", beat: "Describe what changes in this moment.", duration: 5, shot: "Slow push · medium", imagePrompt: "Cinematic story frame, Black lead character, emotionally precise, 16:9", motionPrompt: "Slow, motivated camera movement. Preserve identity and composition.", imageReady: false, motionReady: false, characterIds: activeCharacters.map((character) => character.id), locationId: activeLocations[0]?.id }]); setSelected(scenes.length); }}><span>＋</span> Add a scene</button></div>{activeScene && <aside className="scene-inspector"><div className="inspector-top"><span>SCENE {String(selected + 1).padStart(2, "0")}</span><button onClick={() => setStage("images")}>Open in Frames ↗</button></div><label>Scene title<input value={activeScene.title} onChange={(event) => updateScene(activeScene.id, { title: event.target.value })} /></label><label>Story beat<textarea value={activeScene.beat} onChange={(event) => updateScene(activeScene.id, { beat: event.target.value })} /></label><div className="two-fields"><label>Duration<input type="number" min="1" max="30" value={activeScene.duration} onChange={(event) => updateScene(activeScene.id, { duration: Number(event.target.value) })} /></label><label>Shot<input value={activeScene.shot} onChange={(event) => updateScene(activeScene.id, { shot: event.target.value })} /></label></div>{(activeCharacters.length > 0 || activeLocations.length > 0) && <div className="scene-cast"><span>WHO&rsquo;S IN THIS SCENE</span>{activeCharacters.length > 0 && <div className="scene-cast-chips">{activeCharacters.map((character) => { const checked = (activeScene.characterIds ?? []).includes(character.id); return <label key={character.id} className={`scene-cast-chip ${checked ? "selected" : ""}`}><input type="checkbox" checked={checked} onChange={() => updateScene(activeScene.id, { characterIds: checked ? (activeScene.characterIds ?? []).filter((entry) => entry !== character.id) : [...(activeScene.characterIds ?? []), character.id] })} />{character.name}</label>; })}</div>}{activeLocations.length > 0 && <label>Setting<select value={activeScene.locationId ?? ""} onChange={(event) => updateScene(activeScene.id, { locationId: event.target.value || undefined })}><option value="">None</option>{activeLocations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>}</div>}<div className="prompt-preview"><span>VISUAL DIRECTION</span><p>{activeScene.imagePrompt}</p><button onClick={() => copy(activeScene.imagePrompt, "Image prompt")}>Copy prompt</button></div></aside>}</div><div className="continue-bar"><span><b>Story spine:</b> Recognition → tenderness → integration</span><button className="primary-button" onClick={() => setStage("images")}>Create the frames <span>→</span></button></div></div>}
 
