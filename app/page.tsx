@@ -95,6 +95,8 @@ function Studio() {
   const [showCaptions, setShowCaptions] = useState(true);
   const [isRendering, setIsRendering] = useState(false);
   const [renderedVideoUrl, setRenderedVideoUrl] = useState("");
+  const charNameInputRef = useRef<HTMLInputElement | null>(null);
+  const locNameInputRef = useRef<HTMLInputElement | null>(null);
   const speechRef = useRef<SpeechRecognitionLike | null>(null);
   const dictationBaseRef = useRef("");
   const saveTimerRef = useRef<number | undefined>(undefined);
@@ -288,7 +290,7 @@ function Studio() {
     }
   }
   async function saveCharacter() {
-    if (!charFormName.trim()) return flash("Give this character a name first.");
+    if (!charFormName.trim()) { charNameInputRef.current?.focus(); return flash("Give this character a name first."); }
     setIsSavingCharacter(true);
     try {
       const response = await fetch("/api/characters", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: charFormId ?? undefined, name: charFormName, description: charFormDescription, referenceImageUrl: charFormReferenceUrl || undefined }) });
@@ -351,7 +353,7 @@ function Studio() {
     }
   }
   async function saveLocation() {
-    if (!locFormName.trim()) return flash("Give this location a name first.");
+    if (!locFormName.trim()) { locNameInputRef.current?.focus(); return flash("Give this location a name first."); }
     setIsSavingLocation(true);
     try {
       const response = await fetch("/api/locations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: locFormId ?? undefined, name: locFormName, description: locFormDescription, referenceImageUrl: locFormReferenceUrl || undefined }) });
@@ -607,7 +609,7 @@ function Studio() {
             </div>
             <aside className="cast-form">
               <span>{charFormId ? "EDIT CHARACTER" : "NEW CHARACTER"}</span>
-              <label>Name<input value={charFormName} onChange={(event) => setCharFormName(event.target.value)} placeholder="Aria Nightshade" /></label>
+              <label>Name<input ref={charNameInputRef} value={charFormName} onChange={(event) => setCharFormName(event.target.value)} placeholder="Aria Nightshade" /></label>
               <label>Description<textarea value={charFormDescription} onChange={(event) => setCharFormDescription(event.target.value)} placeholder="A weathered lighthouse keeper, deep brown skin, silver locs pulled back, long indigo coat with brass buttons." /></label>
               <div className="cast-reference">{charFormReferenceUrl ? <img src={charFormReferenceUrl} alt="Character reference" /> : <div className="cast-reference-empty">No reference yet</div>}</div>
               <div className="cast-reference-actions">
@@ -640,7 +642,7 @@ function Studio() {
             </div>
             <aside className="cast-form">
               <span>{locFormId ? "EDIT LOCATION" : "NEW LOCATION"}</span>
-              <label>Name<input value={locFormName} onChange={(event) => setLocFormName(event.target.value)} placeholder="The Cliffside Lighthouse" /></label>
+              <label>Name<input ref={locNameInputRef} value={locFormName} onChange={(event) => setLocFormName(event.target.value)} placeholder="The Cliffside Lighthouse" /></label>
               <label>Description<textarea value={locFormDescription} onChange={(event) => setLocFormDescription(event.target.value)} placeholder="A weathered stone lighthouse on a rocky coastline, spiral iron staircase, brass lantern room, indigo storm clouds beyond tall windows." /></label>
               <div className="cast-reference">{locFormReferenceUrl ? <img src={locFormReferenceUrl} alt="Location reference" /> : <div className="cast-reference-empty">No reference yet</div>}</div>
               <div className="cast-reference-actions">
