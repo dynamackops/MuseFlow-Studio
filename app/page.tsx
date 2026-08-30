@@ -24,8 +24,6 @@ type SpeechRecognitionLike = {
 };
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
-const initialIdea = "On the final night before an old lighthouse goes dark, its keeper discovers that the beam is guiding a tiny paper boat through a storm. She races to repair the failing lantern, signals the boat toward a hidden cove, and watches the sunrise reveal a new keeper arriving to carry the light forward.";
-
 const starterScenes: Scene[] = [
   { id: 1, title: "The final watch", beat: "The keeper climbs the lighthouse stairs as a storm gathers beyond the glass.", duration: 5, shot: "Slow dolly in · wide", imagePrompt: "Cinematic lighthouse interior at night, a seasoned Black woman climbing a spiral staircase toward a warm lantern room, indigo storm clouds beyond tall windows, brass machinery, poetic hand-painted 3D realism, soft film grain, wide composition, 16:9", motionPrompt: "Slow dolly upward behind the keeper. Her coat shifts in the draft, rain moves across the windows, and the lantern flickers above. Preserve facial identity and the calm, deliberate pacing.", imageReady: true, motionReady: true },
   { id: 2, title: "A signal in the storm", beat: "A tiny paper boat appears between the waves, answering each sweep of the beam.", duration: 6, shot: "Gentle orbit · medium wide", imagePrompt: "A tiny glowing paper boat navigating dark ocean waves beneath a lighthouse beam, rain and sea spray, midnight blue and amber palette, restrained magical realism, tender cinematic storybook frame, 16:9", motionPrompt: "Gently orbit the paper boat as it rises and falls on the waves. The lighthouse beam sweeps across the water and the folded sail trembles in the wind. Keep the motion readable and low stimulation.", imageReady: true, motionReady: false },
@@ -52,7 +50,7 @@ export default function Home() {
 
 function Studio() {
   const [stage, setStage] = useState<Stage>("start");
-  const [idea, setIdea] = useState(initialIdea);
+  const [idea, setIdea] = useState("");
   const [projectName, setProjectName] = useState("The Last Light");
   const [scenes, setScenes] = useState<Scene[]>(starterScenes);
   const [selected, setSelected] = useState(0);
@@ -125,7 +123,7 @@ function Studio() {
           const result = await response.json() as { project?: { id: string; name: string; idea: string; leadCharacterIds: string[]; locationIds: string[]; musicBrief: string } | null; scenes?: Scene[] };
           if (response.ok && result.project) {
             setProjectId(result.project.id);
-            setIdea(result.project.idea || initialIdea);
+            setIdea(result.project.idea || "");
             setProjectName(result.project.name || "Untitled film");
             setLeadCharacterIds(result.project.leadCharacterIds ?? []);
             setLocationIds(result.project.locationIds ?? []);
@@ -204,7 +202,7 @@ function Studio() {
       const result = await response.json() as { project?: { id: string; name: string; idea: string; leadCharacterIds: string[]; locationIds: string[]; musicBrief: string } | null; scenes?: Scene[]; error?: string };
       if (!response.ok || !result.project) throw new Error(result.error ?? "Could not open this project.");
       setProjectId(result.project.id);
-      setIdea(result.project.idea || initialIdea);
+      setIdea(result.project.idea || "");
       setProjectName(result.project.name || "Untitled film");
       setLeadCharacterIds(result.project.leadCharacterIds ?? []);
       setLocationIds(result.project.locationIds ?? []);
@@ -222,7 +220,7 @@ function Studio() {
   function startNewProject() {
     setProjectId(null);
     window.localStorage.removeItem("museflow-project-id");
-    setIdea(initialIdea);
+    setIdea("");
     setProjectName("Untitled film");
     setScenes(starterScenes);
     setLeadCharacterIds([]);
