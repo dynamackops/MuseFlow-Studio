@@ -616,7 +616,7 @@ function Studio() {
               </div>
               <div className="cast-form-actions">
                 {charFormId && <button onClick={resetCharacterForm}>Cancel</button>}
-                <button className="primary-button" onClick={saveCharacter} disabled={isSavingCharacter || !charFormName.trim()}>{isSavingCharacter ? "Saving…" : charFormId ? "Update character" : "Save character"}</button>
+                <button className="primary-button" onClick={saveCharacter} disabled={isSavingCharacter}>{isSavingCharacter ? "Saving…" : charFormId ? "Update character" : "Save character"}</button>
               </div>
             </aside>
           </div>
@@ -649,7 +649,7 @@ function Studio() {
               </div>
               <div className="cast-form-actions">
                 {locFormId && <button onClick={resetLocationForm}>Cancel</button>}
-                <button className="primary-button" onClick={saveLocation} disabled={isSavingLocation || !locFormName.trim()}>{isSavingLocation ? "Saving…" : locFormId ? "Update location" : "Save location"}</button>
+                <button className="primary-button" onClick={saveLocation} disabled={isSavingLocation}>{isSavingLocation ? "Saving…" : locFormId ? "Update location" : "Save location"}</button>
               </div>
             </aside>
           </div>
